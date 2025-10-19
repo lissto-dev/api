@@ -1,0 +1,10 @@
+api_keys:
+  - role: admin
+    api_key: "your-admin-key-here"
+    name: "Admin User"
+  - role: developer
+    api_key: "your-developer-key-here"
+    name: "Developer User"
+  - role: user
+    api_key: "your-user-key-here"
+    name: "Regular User"
