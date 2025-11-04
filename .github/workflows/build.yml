@@ -32,7 +32,8 @@ jobs:
 
       - name: Configure Git for private modules
         run: |
-          git config --global url."https://${{ secrets.GITHUB_TOKEN }}@github.com/lissto-dev/controller-playground".insteadOf "https://github.com/lissto-dev/controller"
+          git config --global url."https://${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "https://github.com/"
+          git config --global url."https://github.com/lissto-dev/controller-playground".insteadOf "https://github.com/lissto-dev/controller"
 
       - name: Set GOPRIVATE
         run: echo "GOPRIVATE=github.com/lissto-dev/*" >> $GITHUB_ENV
@@ -41,6 +42,7 @@ jobs:
         run: go mod download
         env:
           GOPRIVATE: github.com/lissto-dev/*
+          GOWORK: off
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
