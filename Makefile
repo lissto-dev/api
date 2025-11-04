@@ -5,7 +5,7 @@ GOCLEAN=$(GOCMD) clean
 GOTEST=$(GOCMD) test
 GOGET=$(GOCMD) get
 GOMOD=$(GOCMD) mod
-BINARY_NAME=lirgo-api
+BINARY_NAME=lissto-api
 BINARY_UNIX=$(BINARY_NAME)_unix
 
 # Build flags
@@ -17,6 +17,7 @@ BUILD_TIME=$(shell date -u '+%Y-%m-%d_%H:%M:%S')
 CMD_DIR=cmd/server
 BUILD_DIR=build
 DIST_DIR=dist
+CONFIG_DIR=../controller/config/default-config.yaml
 
 .PHONY: all build clean test coverage run dev deps fmt vet lint help
 
@@ -58,17 +59,17 @@ coverage:
 # Run the application
 run:
 	@echo "Running $(BINARY_NAME)..."
-	$(GOCMD) run $(CMD_DIR)/main.go
+	$(GOCMD) run $(CMD_DIR)/main.go --config-path $(CONFIG_DIR) $(ARGS)
 
 # Development mode with live reload (requires air)
 dev:
 	@echo "Starting development server..."
 	@if command -v air > /dev/null; then \
-		air; \
+		air -build.cmd 'make build' -build.bin $(BUILD_DIR)/$(BINARY_NAME) -build.args_bin '--config-path $(CONFIG_DIR) $(ARGS)'; \
 	else \
-		echo "Air not found. Install with: go install github.com/cosmtrek/air@latest"; \
+		echo "Air not found. Install with: go install github.com/air-verse/air@latest"; \
 		echo "Running without live reload..."; \
-		$(GOCMD) run $(CMD_DIR)/main.go; \
+		make run; \
 	fi
 
 # Install dependencies
@@ -99,7 +100,7 @@ lint:
 # Install development tools
 install-tools:
 	@echo "Installing development tools..."
-	$(GOGET) github.com/cosmtrek/air@latest
+	$(GOGET) github.com/air-verse/air@latest
 	$(GOGET) github.com/golangci/golangci-lint/cmd/golangci-lint@latest
 
 # Create API keys example file
@@ -169,3 +170,5 @@ help:
 	@echo "  mocks          - Generate mocks"
 	@echo "  security       - Run security scan"
 	@echo "  help           - Show this help"
+
+

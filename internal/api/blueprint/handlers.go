@@ -2,165 +2,403 @@ package blueprint
 
 import (
 	"fmt"
-	"time"
 
 	"github.com/labstack/echo/v4"
-	"github.com/lirgo.dev/api/internal/middleware"
-	"github.com/lirgo.dev/api/pkg/response"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"github.com/lissto.dev/api/internal/api/common"
+	"github.com/lissto.dev/api/internal/middleware"
+	"github.com/lissto.dev/api/pkg/authz"
+	"github.com/lissto.dev/api/pkg/compose"
+	"github.com/lissto.dev/api/pkg/k8s"
+	"github.com/lissto.dev/api/pkg/logging"
+	envv1alpha1 "github.com/lissto.dev/controller/api/v1alpha1"
+	operatorConfig "github.com/lissto.dev/controller/pkg/config"
+	"go.uber.org/zap"
 )
 
 // Handler handles blueprint-related HTTP requests
 type Handler struct {
-	// In a real implementation, this would contain dependencies like:
-	// - k8s client
-	// - database client
-	// - logger
+	k8sClient  *k8s.Client
+	authorizer *authz.Authorizer
+	nsManager  *authz.NamespaceManager
+	config     *operatorConfig.Config
 }
 
 // NewHandler creates a new blueprint handler
-func NewHandler() *Handler {
-	return &Handler{}
-}
-
-// GetBlueprints handles GET /blueprints
-func (h *Handler) GetBlueprints(c echo.Context) error {
-	// Get user from context
-	user, _ := middleware.GetUserFromContext(c)
-
-	// In a real implementation, this would query Kubernetes API
-	// For now, return mock data
-	blueprints := []Blueprint{
-		{
-			ID:          "blueprint-1",
-			Name:        "web-app-blueprint",
-			Description: "Standard web application blueprint",
-			Version:     "1.0.0",
-			Status:      "active",
-			Template: map[string]string{
-				"nginx": "1.21",
-				"php":   "8.1",
-				"mysql": "8.0",
-			},
-			CreatedAt: time.Now().Add(-48 * time.Hour),
-			UpdatedAt: time.Now().Add(-2 * time.Hour),
-		},
-		{
-			ID:          "blueprint-2",
-			Name:        "api-service-blueprint",
-			Description: "REST API service blueprint",
-			Version:     "2.1.0",
-			Status:      "active",
-			Template: map[string]string{
-				"node":  "18",
-				"redis": "7",
-				"mongo": "6",
-			},
-			CreatedAt: time.Now().Add(-72 * time.Hour),
-			UpdatedAt: time.Now().Add(-6 * time.Hour),
-		},
+func NewHandler(
+	k8sClient *k8s.Client,
+	authorizer *authz.Authorizer,
+	nsManager *authz.NamespaceManager,
+	config *operatorConfig.Config,
+) *Handler {
+	return &Handler{
+		k8sClient:  k8sClient,
+		authorizer: authorizer,
+		nsManager:  nsManager,
+		config:     config,
 	}
-
-	return response.OK(c, fmt.Sprintf("Blueprints retrieved by %s", user.Name), BlueprintListResponse{
-		Blueprints: blueprints,
-		Total:      len(blueprints),
-	})
-}
-
-// GetBlueprint handles GET /blueprints/:id
-func (h *Handler) GetBlueprint(c echo.Context) error {
-	id := c.Param("id")
-	user, _ := middleware.GetUserFromContext(c)
-
-	// In a real implementation, this would query Kubernetes API for specific blueprint
-	// For now, return mock data
-	blueprint := Blueprint{
-		ID:          id,
-		Name:        "mock-blueprint-" + id,
-		Description: "Mock blueprint description for " + id,
-		Version:     "1.0.0",
-		Status:      "active",
-		Template: map[string]string{
-			"service": "v1",
-			"db":      "v2",
-		},
-		CreatedAt: time.Now().Add(-96 * time.Hour),
-		UpdatedAt: time.Now().Add(-4 * time.Hour),
-	}
-
-	return response.OK(c, fmt.Sprintf("Blueprint retrieved by %s", user.Name), BlueprintResponse{
-		Blueprint: blueprint,
-	})
 }
 
 // CreateBlueprint handles POST /blueprints
 func (h *Handler) CreateBlueprint(c echo.Context) error {
-	var req CreateBlueprintRequest
+	var req common.CreateBlueprintRequest
 	user, _ := middleware.GetUserFromContext(c)
 
+	// Bind and validate first
 	if err := c.Bind(&req); err != nil {
-		return response.BadRequest(c, "Invalid request body")
+		logging.Logger.Error("Failed to bind request", zap.Error(err))
+		return c.String(400, "Invalid request")
 	}
 	if err := c.Validate(&req); err != nil {
-		return response.BadRequest(c, err.Error())
+		logging.Logger.Error("Request validation failed", zap.Error(err))
+		return c.String(400, err.Error())
 	}
 
-	// In a real implementation, this would create a Kubernetes resource
-	// For now, return mock data
-	blueprint := Blueprint{
-		ID:          fmt.Sprintf("blueprint-%d", time.Now().UnixNano()),
-		Name:        req.Name,
-		Description: req.Description,
-		Version:     req.Version,
-		Status:      "creating",
-		Template:    req.Template,
-		CreatedAt:   time.Now(),
-		UpdatedAt:   time.Now(),
+	// Log request details after binding
+	logging.Logger.Info("Blueprint creation request",
+		zap.String("user", user.Name),
+		zap.String("role", user.Role.String()),
+		zap.String("branch", req.Branch),
+		zap.String("author", req.Author),
+		zap.String("ip", c.RealIP()))
+
+	// Determine target namespace
+	namespace, err := h.authorizer.DetermineNamespace(user.Role, user.Name, &req)
+	if err != nil {
+		logging.Logger.Error("Namespace determination failed",
+			zap.String("user", user.Name),
+			zap.String("role", user.Role.String()),
+			zap.String("branch", req.Branch),
+			zap.String("author", req.Author),
+			zap.Error(err))
+		return c.String(400, err.Error())
 	}
 
-	return response.Created(c, fmt.Sprintf("Blueprint created by %s", user.Name), BlueprintResponse{
-		Blueprint: blueprint,
-	})
+	logging.Logger.Info("Namespace determined",
+		zap.String("namespace", namespace),
+		zap.String("user", user.Name),
+		zap.String("role", user.Role.String()))
+
+	// Check authorization
+	perm := h.authorizer.CanAccess(user.Role, authz.ActionCreate, authz.ResourceBlueprint, namespace, user.Name)
+	if !perm.Allowed {
+		logging.Logger.Error("Authorization denied",
+			zap.String("user", user.Name),
+			zap.String("role", user.Role.String()),
+			zap.String("action", string(authz.ActionCreate)),
+			zap.String("resource", string(authz.ResourceBlueprint)),
+			zap.String("namespace", namespace),
+			zap.String("reason", perm.Reason))
+		return c.NoContent(403)
+	}
+
+	// Hash the docker-compose content
+	fullHash := req.HashDockerCompose()
+	shortHash := fullHash
+	if len(fullHash) > 8 {
+		shortHash = fullHash[:8]
+	}
+
+	// Check if blueprint with this hash already exists (deduplication)
+	// For deploy role, check all namespaces; for others, check only target namespace
+	var blueprintList *envv1alpha1.BlueprintList
+
+	if user.Role == authz.Deploy {
+		// Deploy role: check all namespaces for duplicates
+		blueprintList, err = h.k8sClient.ListBlueprints(c.Request().Context(), "")
+		if err != nil {
+			logging.Logger.Error("Failed to query blueprints across all namespaces",
+				zap.Error(err))
+			return c.String(500, "Failed to query blueprints")
+		}
+	} else {
+		// Other roles: check only target namespace
+		blueprintList, err = h.k8sClient.ListBlueprints(c.Request().Context(), namespace)
+		if err != nil {
+			logging.Logger.Error("Failed to query blueprints",
+				zap.String("namespace", namespace),
+				zap.Error(err))
+			return c.String(500, "Failed to query blueprints")
+		}
+	}
+
+	// Check for duplicates with priority: target namespace first, then global namespace
+	var targetNamespaceMatch *envv1alpha1.Blueprint
+	var globalNamespaceMatch *envv1alpha1.Blueprint
+	globalNamespace := h.nsManager.GetGlobalNamespace()
+
+	for _, bp := range blueprintList.Items {
+		if bp.Labels != nil && bp.Labels["hash"] == shortHash {
+			if bp.Namespace == namespace {
+				targetNamespaceMatch = &bp
+			} else if bp.Namespace == globalNamespace {
+				globalNamespaceMatch = &bp
+			}
+		}
+	}
+
+	// Return the most appropriate match
+	if targetNamespaceMatch != nil {
+		// Same content already exists in target namespace - return 200 with identifier
+		identifier := common.GenerateScopedIdentifier(namespace, targetNamespaceMatch.Name)
+		logging.Logger.Info("Blueprint already exists in target namespace",
+			zap.String("user", user.Name),
+			zap.String("namespace", namespace),
+			zap.String("blueprint", targetNamespaceMatch.Name),
+			zap.String("identifier", identifier))
+		return c.String(200, identifier)
+	}
+
+	if globalNamespaceMatch != nil && user.Role == authz.Deploy {
+		// Deploy role found duplicate in global namespace - return 200 with global identifier
+		identifier := common.GenerateScopedIdentifier(globalNamespace, globalNamespaceMatch.Name)
+		logging.Logger.Info("Deploy role found duplicate in global namespace",
+			zap.String("user", user.Name),
+			zap.String("target_namespace", namespace),
+			zap.String("global_namespace", globalNamespace),
+			zap.String("blueprint", globalNamespaceMatch.Name),
+			zap.String("identifier", identifier))
+		return c.String(200, identifier)
+	}
+
+	// Blueprint doesn't exist - create new one
+
+	// Parse docker-compose to extract metadata (title, services)
+	// If parsing fails, don't create blueprint
+	metadata, err := compose.ParseBlueprintMetadata(req.Compose, req.Repository)
+	if err != nil {
+		logging.Logger.Error("Failed to parse docker-compose",
+			zap.String("user", user.Name),
+			zap.String("namespace", namespace),
+			zap.Error(err))
+		return c.String(400, fmt.Sprintf("Invalid docker-compose content: %v", err))
+	}
+
+	// Convert service metadata to JSON for annotation storage
+	servicesJSON, err := compose.ServiceMetadataToJSON(metadata.Services)
+	if err != nil {
+		logging.Logger.Error("Failed to serialize service metadata",
+			zap.String("user", user.Name),
+			zap.String("namespace", namespace),
+			zap.Error(err))
+		return c.String(500, "Failed to process blueprint metadata")
+	}
+
+	// Ensure namespace exists
+	if err := h.k8sClient.EnsureNamespace(c.Request().Context(), namespace); err != nil {
+		logging.Logger.Error("Failed to create namespace",
+			zap.String("namespace", namespace),
+			zap.Error(err))
+		return c.String(500, "Failed to create namespace")
+	}
+
+	// Generate blueprint name with timestamp
+	blueprintName := common.GenerateBlueprintName(fullHash)
+
+	// Prepare annotations
+	annotations := make(map[string]string)
+	if metadata.Title != "" {
+		annotations["lissto.dev/title"] = metadata.Title
+	}
+	if req.Repository != "" {
+		annotations["lissto.dev/repository"] = req.Repository
+	}
+	annotations["lissto.dev/services"] = servicesJSON
+
+	// Create Blueprint CRD
+	blueprint := &envv1alpha1.Blueprint{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      blueprintName,
+			Namespace: namespace,
+			Labels: map[string]string{
+				"hash":   shortHash,
+				"branch": req.Branch,
+			},
+			Annotations: annotations,
+		},
+		Spec: envv1alpha1.BlueprintSpec{
+			DockerCompose: req.Compose,
+			Hash:          fullHash,
+		},
+	}
+
+	if err := h.k8sClient.CreateBlueprint(c.Request().Context(), blueprint); err != nil {
+		logging.Logger.Error("Failed to create blueprint",
+			zap.String("namespace", namespace),
+			zap.String("name", blueprintName),
+			zap.Error(err))
+		return c.String(500, "Failed to create blueprint")
+	}
+
+	// Return 201 with scoped identifier
+	identifier := common.GenerateScopedIdentifier(namespace, blueprintName)
+	return c.String(201, identifier)
 }
 
-// UpdateBlueprint handles PUT /blueprints/:id
-func (h *Handler) UpdateBlueprint(c echo.Context) error {
-	id := c.Param("id")
-	var req UpdateBlueprintRequest
+// BlueprintResponse represents enriched blueprint data
+type BlueprintResponse struct {
+	ID      string                  `json:"id"`
+	Title   string                  `json:"title"`
+	Content compose.ServiceMetadata `json:"content"`
+}
+
+// extractBlueprintResponse extracts enriched data from blueprint annotations
+func extractBlueprintResponse(bp *envv1alpha1.Blueprint) BlueprintResponse {
+	identifier := common.GenerateScopedIdentifier(bp.Namespace, bp.Name)
+
+	// Extract title from annotations
+	title := ""
+	var services compose.ServiceMetadata
+
+	if bp.Annotations != nil {
+		title = bp.Annotations["lissto.dev/title"]
+
+		if servicesJSON, ok := bp.Annotations["lissto.dev/services"]; ok && servicesJSON != "" {
+			if parsedServices, err := compose.ServiceMetadataFromJSON(servicesJSON); err == nil {
+				services = *parsedServices
+			}
+		}
+	}
+
+	// Ensure empty slices instead of nil
+	if services.Services == nil {
+		services.Services = []string{}
+	}
+	if services.Infra == nil {
+		services.Infra = []string{}
+	}
+
+	return BlueprintResponse{
+		ID:      identifier,
+		Title:   title,
+		Content: services,
+	}
+}
+
+// GetBlueprints handles GET /blueprints
+func (h *Handler) GetBlueprints(c echo.Context) error {
 	user, _ := middleware.GetUserFromContext(c)
 
-	if err := c.Bind(&req); err != nil {
-		return response.BadRequest(c, "Invalid request body")
-	}
-	if err := c.Validate(&req); err != nil {
-		return response.BadRequest(c, err.Error())
+	// Get allowed namespaces
+	allowedNS := h.authorizer.GetAllowedNamespaces(
+		user.Role,
+		authz.ActionList,
+		authz.ResourceBlueprint,
+		user.Name,
+	)
+
+	if len(allowedNS) == 0 {
+		return c.NoContent(403)
 	}
 
-	// In a real implementation, this would update a Kubernetes resource
-	// For now, return mock data
-	blueprint := Blueprint{
-		ID:          id,
-		Name:        req.Name,
-		Description: req.Description,
-		Version:     req.Version,
-		Status:      "updating",
-		Template:    req.Template,
-		CreatedAt:   time.Now().Add(-96 * time.Hour), // Assume existing
-		UpdatedAt:   time.Now(),
+	var allBlueprints []BlueprintResponse
+
+	// List from allowed namespaces
+	if allowedNS[0] == "*" {
+		// Admin: list from all namespaces
+		bpList, err := h.k8sClient.ListBlueprints(c.Request().Context(), "")
+		if err != nil {
+			return c.String(500, "Failed to list blueprints")
+		}
+		for i := range bpList.Items {
+			allBlueprints = append(allBlueprints, extractBlueprintResponse(&bpList.Items[i]))
+		}
+	} else {
+		// List from each allowed namespace
+		for _, ns := range allowedNS {
+			bpList, err := h.k8sClient.ListBlueprints(c.Request().Context(), ns)
+			if err != nil {
+				continue
+			}
+			for i := range bpList.Items {
+				allBlueprints = append(allBlueprints, extractBlueprintResponse(&bpList.Items[i]))
+			}
+		}
 	}
 
-	return response.OK(c, fmt.Sprintf("Blueprint updated by %s", user.Name), BlueprintResponse{
-		Blueprint: blueprint,
-	})
+	// Return array of enriched blueprint objects
+	return c.JSON(200, allBlueprints)
+}
+
+// GetBlueprint handles GET /blueprints/:id
+func (h *Handler) GetBlueprint(c echo.Context) error {
+	name := c.Param("id")
+	user, _ := middleware.GetUserFromContext(c)
+
+	// Get allowed namespaces
+	allowedNS := h.authorizer.GetAllowedNamespaces(
+		user.Role,
+		authz.ActionRead,
+		authz.ResourceBlueprint,
+		user.Name,
+	)
+
+	if len(allowedNS) == 0 {
+		return c.NoContent(403)
+	}
+
+	// Try to find in allowed namespaces
+	if allowedNS[0] == "*" {
+		// Admin: search in all namespaces (no query param needed)
+		// First try global namespace
+		blueprint, err := h.k8sClient.GetBlueprint(c.Request().Context(), h.nsManager.GetGlobalNamespace(), name)
+		if err == nil {
+			return c.JSON(200, extractBlueprintResponse(blueprint))
+		}
+
+		// If not found in global, search all developer namespaces
+		// This is a simplified approach - in production you might want to list all namespaces
+		return c.NoContent(404)
+	}
+
+	// Try each allowed namespace
+	for _, ns := range allowedNS {
+		blueprint, err := h.k8sClient.GetBlueprint(c.Request().Context(), ns, name)
+		if err == nil {
+			return c.JSON(200, extractBlueprintResponse(blueprint))
+		}
+	}
+
+	return c.NoContent(404)
 }
 
 // DeleteBlueprint handles DELETE /blueprints/:id
 func (h *Handler) DeleteBlueprint(c echo.Context) error {
-	id := c.Param("id")
+	name := c.Param("id")
 	user, _ := middleware.GetUserFromContext(c)
 
-	// In a real implementation, this would delete a Kubernetes resource
-	// For now, return success
-	return response.OK(c, fmt.Sprintf("Blueprint %s deleted by %s", id, user.Name), map[string]interface{}{
-		"id": id,
-	})
+	// Get allowed namespaces
+	allowedNS := h.authorizer.GetAllowedNamespaces(
+		user.Role,
+		authz.ActionDelete,
+		authz.ResourceBlueprint,
+		user.Name,
+	)
+
+	if len(allowedNS) == 0 {
+		return c.NoContent(403)
+	}
+
+	// Try to find and delete in allowed namespaces
+	if allowedNS[0] == "*" {
+		// Admin: search in all namespaces (no query param needed)
+		// First try global namespace
+		if err := h.k8sClient.DeleteBlueprint(c.Request().Context(), h.nsManager.GetGlobalNamespace(), name); err == nil {
+			return c.NoContent(204)
+		}
+
+		// If not found in global, search all developer namespaces
+		// This is a simplified approach - in production you might want to list all namespaces
+		return c.NoContent(404)
+	}
+
+	// Try each allowed namespace
+	for _, ns := range allowedNS {
+		if err := h.k8sClient.DeleteBlueprint(c.Request().Context(), ns, name); err == nil {
+			return c.NoContent(204)
+		}
+	}
+
+	return c.NoContent(404)
 }

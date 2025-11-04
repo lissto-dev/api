@@ -1,82 +1,120 @@
 package server
 
 import (
-	"log"
-	"time"
+	"sync"
 
-	"github.com/go-pkgz/auth/v2"
-	"github.com/go-pkgz/auth/v2/token"
 	"github.com/labstack/echo/v4"
-	"github.com/lirgo.dev/api/internal/api/blueprint"
-	"github.com/lirgo.dev/api/internal/api/stack"
-	"github.com/lirgo.dev/api/internal/middleware"
-	"github.com/lirgo.dev/api/pkg/config"
-	"github.com/lirgo.dev/api/pkg/response"
+	"go.uber.org/zap"
+
+	"github.com/lissto.dev/api/internal/api/apikey"
+	"github.com/lissto.dev/api/internal/api/blueprint"
+	"github.com/lissto.dev/api/internal/api/env"
+	"github.com/lissto.dev/api/internal/api/prepare"
+	"github.com/lissto.dev/api/internal/api/stack"
+	"github.com/lissto.dev/api/internal/api/user"
+	"github.com/lissto.dev/api/internal/middleware"
+	"github.com/lissto.dev/api/pkg/authz"
+	"github.com/lissto.dev/api/pkg/cache"
+	"github.com/lissto.dev/api/pkg/config"
+	"github.com/lissto.dev/api/pkg/k8s"
+	"github.com/lissto.dev/api/pkg/logging"
+	operatorConfig "github.com/lissto.dev/controller/pkg/config"
 )
 
 // Server represents the API server
 type Server struct {
-	echo    *echo.Echo
-	apiKeys []config.APIKey
-	auth    *auth.Service
+	echo      *echo.Echo
+	apiKeys   []config.APIKey
+	apiKeysMu sync.RWMutex
+	config    *operatorConfig.Config
+	k8sClient *k8s.Client
 }
 
-// New creates a new server instance
-func New(e *echo.Echo, apiKeys []config.APIKey) *Server {
-	// Initialize go-pkgz/auth service
-	authService := auth.NewService(auth.Opts{
-		SecretReader: token.SecretFunc(func(id string) (string, error) {
-			return "lirgo-secret-key-change-in-production", nil
-		}),
-		TokenDuration:  time.Hour * 24,
-		CookieDuration: time.Hour * 24 * 7,
-		Issuer:         "lirgo-api",
-		URL:            "http://localhost:8080",
-		Validator: token.ValidatorFunc(func(_ string, claims token.Claims) bool {
-			// Allow all users with valid claims
-			return claims.User != nil && claims.User.ID != ""
-		}),
-	})
+// GetAPIKeys returns a copy of the current API keys
+func (s *Server) GetAPIKeys() []config.APIKey {
+	s.apiKeysMu.RLock()
+	defer s.apiKeysMu.RUnlock()
+	keys := make([]config.APIKey, len(s.apiKeys))
+	copy(keys, s.apiKeys)
+	return keys
+}
 
-	return &Server{
-		echo:    e,
-		apiKeys: apiKeys,
-		auth:    authService,
+// UpdateAPIKeys updates the in-memory API keys list
+func (s *Server) UpdateAPIKeys(keys []config.APIKey) error {
+	s.apiKeysMu.Lock()
+	defer s.apiKeysMu.Unlock()
+	s.apiKeys = make([]config.APIKey, len(keys))
+	copy(s.apiKeys, keys)
+	return nil
+}
+
+// New creates a new API server instance
+func New(
+	e *echo.Echo,
+	apiKeys []config.APIKey,
+	cfg *operatorConfig.Config,
+	k8sClient *k8s.Client,
+	authorizer *authz.Authorizer,
+	nsManager *authz.NamespaceManager,
+) *Server {
+	// Create server instance
+	srv := &Server{
+		echo:      e,
+		apiKeys:   apiKeys,
+		config:    cfg,
+		k8sClient: k8sClient,
 	}
-}
 
-// Start starts the server
-func (s *Server) Start() error {
-	s.setupRoutes()
+	// Create in-memory cache for prepare results
+	memCache := cache.NewMemoryCache()
+	logging.Logger.Info("Initialized in-memory cache for prepare results")
 
-	log.Println("Starting Lirgo API server on :8080")
-	log.Println("Sample API Keys:")
-	for _, ak := range s.apiKeys {
-		log.Printf("%s: %s", ak.Role, ak.APIKey)
+	// Create handlers with dependencies
+	stackHandler := stack.NewHandler(k8sClient, authorizer, nsManager, cfg, memCache)
+	blueprintHandler := blueprint.NewHandler(k8sClient, authorizer, nsManager, cfg)
+	envHandler := env.NewHandler(k8sClient, authorizer, nsManager, cfg)
+	userHandler := user.NewHandler()
+	prepareHandler := prepare.NewHandler(k8sClient, authorizer, nsManager, cfg, memCache)
+
+	// Create API key handler with updater function
+	apiKeyUpdater := func(keys []config.APIKey) error {
+		return srv.UpdateAPIKeys(keys)
 	}
+	apiKeyHandler := apikey.NewHandler(k8sClient, cfg, apiKeyUpdater)
 
-	return s.echo.Start(":8080")
-}
-
-// setupRoutes configures all routes
-func (s *Server) setupRoutes() {
-	// Health check endpoint (no auth required)
-	s.echo.GET("/health", func(c echo.Context) error {
-		return response.OK(c, "Service is healthy", map[string]interface{}{
-			"status":  "healthy",
-			"service": "lirgo-api",
-		})
+	// API routes with authentication
+	// Use function-based middleware to get current keys dynamically
+	api := e.Group("/api/v1")
+	api.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			// Get current API keys on each request
+			currentKeys := srv.GetAPIKeys()
+			// Apply API key middleware with current keys
+			return middleware.APIKeyMiddleware(currentKeys, authorizer)(next)(c)
+		}
 	})
-
-	// Auth endpoints using go-pkgz/auth
-	authRoutes, _ := s.auth.Handlers()
-	s.echo.Any("/auth/*", echo.WrapHandler(authRoutes))
-
-	// Protected API v1 routes
-	v1 := s.echo.Group("/api/v1")
-	v1.Use(middleware.APIKeyMiddleware(s.apiKeys, s.auth))
 
 	// Register resource routes
-	stack.RegisterRoutes(v1.Group("/stacks"))
-	blueprint.RegisterRoutes(v1.Group("/blueprints"))
+	stack.RegisterRoutes(api.Group("/stacks"), stackHandler)
+	blueprint.RegisterRoutes(api.Group("/blueprints"), blueprintHandler)
+	env.RegisterRoutes(api.Group("/envs"), envHandler)
+	user.RegisterRoutes(api.Group("/user"), userHandler)
+	prepare.RegisterRoutes(api.Group(""), prepareHandler)
+
+	// Register internal admin routes (apikey routes register themselves)
+	apikey.RegisterRoutes(api, apiKeyHandler)
+
+	// Health check (no auth required)
+	e.GET("/health", func(c echo.Context) error {
+		return c.NoContent(200)
+	})
+
+	return srv
+}
+
+// Start starts the API server
+func (s *Server) Start() error {
+	port := ":8080"
+	logging.Logger.Info("Starting server", zap.String("port", port))
+	return s.echo.Start(port)
 }

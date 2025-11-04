@@ -72,6 +72,6 @@ Dockerfile.dev
 *.kubeconfig
 kubeconfig
 
-# Local development
-main
-server
+# Local development binaries
+/main
+/server

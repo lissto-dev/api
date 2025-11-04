@@ -1,4 +1,4 @@
-# Lirgo API
+# Lissto API
 
 A clean, scalable Go API built with Echo and go-pkgz/auth, designed for Kubernetes resource management with role-based access control.
 
@@ -43,20 +43,9 @@ go mod tidy
 
 ### 2. Configure API Keys
 
-Edit `api-keys.yaml` to add your API keys:
+On first startup, the API will automatically generate an admin API key and store it in the Kubernetes secret `lissto-api-keys` in the global namespace. Check the logs for the generated admin key.
 
-```yaml
-api-keys:
-  - role: admin
-    api_key: "your-admin-key-here"
-    name: "Admin User"
-  - role: developer
-    api_key: "your-dev-key-here"
-    name: "Developer User"
-  - role: user
-    api_key: "your-user-key-here"
-    name: "Regular User"
-```
+To create additional API keys, use the admin endpoint (see "API Key Management" section below).
 
 ### 3. Run the Server
 
@@ -71,7 +60,46 @@ The server will start on `http://localhost:8080`
 ### Health Check
 - `GET /health` - Service health check (no auth required)
 
-### Stack Management (Admin Only)
+### API Key Management (Admin Only)
+- `POST /api/v1/_internal/api-keys` - Create a new API key
+
+**Create API Key Example:**
+
+```bash
+curl -X POST \
+     -H "X-API-Key: your-admin-key-here" \
+     -H "Content-Type: application/json" \
+     -d '{
+       "name": "john",
+       "role": "user",
+       "slack_user_id": "U123456"
+     }' \
+     http://localhost:8080/api/v1/_internal/api-keys
+```
+
+**Request Body:**
+- `name` (required): Unique name/identifier for the API key
+- `role` (required): One of `admin`, `deploy`, or `user`
+- `slack_user_id` (optional): Slack user ID for future integration
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "API key created",
+  "data": {
+    "api_key": "user-abc123def4567890...",
+    "name": "john",
+    "role": "user"
+  }
+}
+```
+
+**Notes:**
+- API keys use role-based prefixes: `admin-`, `deploy-`, or `user-` followed by a random hex string
+- The API key is only shown once in the response. Save it securely as it cannot be retrieved later
+
+### Stack Management
 - `GET /api/v1/stacks` - List all stacks
 - `GET /api/v1/stacks/:id` - Get specific stack
 - `POST /api/v1/stacks` - Create new stack
@@ -175,11 +203,11 @@ To add a new resource (e.g., `environment`):
 
 ### Extending Authentication
 
-The current implementation uses file-based API keys. To extend:
+The current implementation uses Kubernetes secret-based API keys. To extend:
 
 1. Modify `pkg/config/config.go` for different storage
 2. Update `internal/middleware/auth.go` for new auth methods
-3. Add new roles in `api-keys.yaml`
+3. API keys can be managed via the admin endpoint or stored in the Kubernetes secret
 
 ### Kubernetes Integration
 
@@ -196,21 +224,28 @@ The `internal/k8s/client.go` provides a wrapper around the Kubernetes client. To
 - `KUBECONFIG`: Path to kubeconfig file (optional, defaults to `~/.kube/config`)
 - `API_KEYS_FILE`: Path to API keys file (defaults to `api-keys.yaml`)
 
-### API Keys File
+### API Keys Storage
 
-The `api-keys.yaml` file supports:
+API keys are stored in a Kubernetes secret (`lissto-api-keys` in the global namespace) and can be managed via:
 
-- `role`: Required role name
+1. **Admin API Endpoint** (recommended): Use `POST /api/v1/_internal/api-keys` with an admin API key
+2. **Kubernetes Secret**: Directly edit the secret if needed
+
+The secret format follows the YAML structure:
+- `role`: Required role name (`admin`, `deploy`, or `user`)
 - `api_key`: Required API key string
 - `name`: Optional user name for logging
+- `slack_user_id`: Optional Slack user ID for integration
 
 ## Security Considerations
 
-- API keys are loaded once at startup and cached in memory
+- API keys are stored in Kubernetes secrets and loaded on startup
+- API keys are cached in memory and can be updated dynamically
 - All API communications should use HTTPS in production
 - Rotate API keys regularly
-- Use strong, random API keys
+- Use strong, random API keys (automatically generated)
 - Monitor API key usage
+- Admin API keys have full access - protect them carefully
 
 ## Next Steps
 

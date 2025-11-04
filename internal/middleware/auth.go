@@ -1,55 +1,75 @@
 package middleware
 
 import (
-	"github.com/go-pkgz/auth/v2"
 	"github.com/labstack/echo/v4"
-	authpkg "github.com/lirgo.dev/api/pkg/auth"
-	"github.com/lirgo.dev/api/pkg/config"
-	"github.com/lirgo.dev/api/pkg/response"
+	"github.com/lissto.dev/api/pkg/authz"
+	"github.com/lissto.dev/api/pkg/config"
+	"github.com/lissto.dev/api/pkg/logging"
+	"github.com/lissto.dev/api/pkg/response"
+	"go.uber.org/zap"
 )
+
+// SimpleRequest implements NamespaceRequest interface
+type SimpleRequest struct {
+	branch string
+	author string
+}
+
+func (r SimpleRequest) GetBranch() string { return r.branch }
+func (r SimpleRequest) GetAuthor() string { return r.author }
 
 // User represents an authenticated user
 type User struct {
-	ID    string       `json:"id"`
-	Name  string       `json:"name"`
-	Role  authpkg.Role `json:"role"`
-	Email string       `json:"email"`
+	ID          string     `json:"id"`
+	Name        string     `json:"name"`
+	Role        authz.Role `json:"role"`
+	Email       string     `json:"email"`
+	SlackUserID string     `json:"slack_user_id,omitempty"`
 }
 
-// APIKeyMiddleware validates API keys and creates JWT tokens
-func APIKeyMiddleware(apiKeys []config.APIKey, authService *auth.Service) echo.MiddlewareFunc {
+// APIKeyMiddleware validates API keys and creates user context
+func APIKeyMiddleware(apiKeys []config.APIKey, authorizer *authz.Authorizer) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			// Get API key from header
 			apiKey := c.Request().Header.Get("X-API-Key")
 			if apiKey == "" {
+				endpoint := c.Request().Method + " " + c.Request().URL.Path
+				logging.LogDeniedWithIP("missing_api_key", "", endpoint, c.RealIP())
 				return response.Unauthorized(c, "API key required")
 			}
 
 			// Validate API key
 			keyData, found := config.FindAPIKeyByKey(apiKeys, apiKey)
 			if !found {
+				endpoint := c.Request().Method + " " + c.Request().URL.Path
+				logging.LogDeniedWithIP("invalid_api_key", "", endpoint, c.RealIP())
 				return response.Unauthorized(c, "Invalid API key")
 			}
 
-			// Skip JWT token generation for now - just use API key validation
-
 			// Set user in context
 			user := &User{
-				ID:    keyData.Name,
-				Name:  keyData.Name,
-				Role:  authpkg.ParseRole(keyData.Role),
-				Email: keyData.Name + "@lirgo.dev",
+				ID:          keyData.Name,
+				Name:        keyData.Name,
+				Role:        authz.ParseRole(keyData.Role),
+				Email:       keyData.Name + "@lissto.dev",
+				SlackUserID: keyData.SlackUserID,
 			}
 			c.Set("user", user)
+			c.Set("authorizer", authorizer)
+
+			logging.Logger.Info("User authenticated",
+				zap.String("user", user.Name),
+				zap.String("role", user.Role.String()),
+				zap.String("endpoint", c.Request().Method+" "+c.Request().URL.Path))
 
 			return next(c)
 		}
 	}
 }
 
-// RequireRole middleware checks if user has sufficient role permissions
-func RequireRole(requiredRole authpkg.Role) echo.MiddlewareFunc {
+// RequirePermission middleware checks specific permissions
+func RequirePermission(action authz.Action, resourceType authz.ResourceType) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			user := c.Get("user")
@@ -57,10 +77,40 @@ func RequireRole(requiredRole authpkg.Role) echo.MiddlewareFunc {
 				return response.Unauthorized(c, "User not authenticated")
 			}
 
+			authorizer := c.Get("authorizer").(*authz.Authorizer)
 			userData := user.(*User)
-			if !userData.Role.HasPermission(requiredRole) {
-				return response.Forbidden(c, "Insufficient permissions. Required: "+requiredRole.String())
+
+			// Determine namespace from request parameters
+			req := SimpleRequest{
+				branch: c.QueryParam("branch"),
+				author: c.QueryParam("author"),
 			}
+			namespace, err := authorizer.DetermineNamespace(
+				userData.Role,
+				userData.Name,
+				req,
+			)
+			if err != nil {
+				return response.BadRequest(c, err.Error())
+			}
+
+			// Check permission
+			permission := authorizer.CanAccess(
+				userData.Role,
+				action,
+				resourceType,
+				namespace,
+				userData.Name,
+			)
+
+			if !permission.Allowed {
+				endpoint := c.Request().Method + " " + c.Request().URL.Path
+				logging.LogDeniedWithIP("insufficient_perms", userData.Name, endpoint, c.RealIP())
+				return response.Forbidden(c, permission.Reason)
+			}
+
+			// Set namespace in context for handlers
+			c.Set("namespace", namespace)
 
 			return next(c)
 		}
@@ -74,18 +124,4 @@ func GetUserFromContext(c echo.Context) (*User, bool) {
 		return nil, false
 	}
 	return user.(*User), true
-}
-
-// CheckRolePermission checks if the user has sufficient permissions for the required role
-func CheckRolePermission(c echo.Context, requiredRole authpkg.Role) error {
-	user, exists := GetUserFromContext(c)
-	if !exists {
-		return response.Unauthorized(c, "User not authenticated")
-	}
-
-	if !user.Role.HasPermission(requiredRole) {
-		return response.Forbidden(c, "Insufficient permissions. Required: "+requiredRole.String())
-	}
-
-	return nil
 }

@@ -1,7 +1,7 @@
 version: '3.8'
 
 services:
-  lirgo-api:
+  lissto-api:
     build: .
     ports:
       - "8080:8080"
@@ -27,7 +27,9 @@ services:
     volumes:
       - ./nginx.conf:/etc/nginx/nginx.conf:ro
     depends_on:
-      - lirgo-api
+      - lissto-api
     restart: unless-stopped
     profiles:
       - proxy
+
+
