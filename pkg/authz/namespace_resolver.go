@@ -3,7 +3,7 @@ package authz
 import (
 	"fmt"
 
-	"github.com/lissto.dev/api/pkg/logging"
+	"github.com/lissto-dev/api/pkg/logging"
 )
 
 // NamespaceRequest interface for requests with namespace fields

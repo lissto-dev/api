@@ -7,6 +7,16 @@ WORKDIR /app
 # Install git and ca-certificates
 RUN apk add --no-cache git ca-certificates
 
+# Configure Git for private modules (build arg for token)
+ARG GITHUB_TOKEN
+RUN if [ -n "$GITHUB_TOKEN" ]; then \
+      git config --global url."https://${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"; \
+    fi && \
+    git config --global url."https://github.com/lissto-dev/controller-playground".insteadOf "https://github.com/lissto-dev/controller"
+
+# Set GOPRIVATE for private repositories
+ENV GOPRIVATE=github.com/lissto-dev/*
+
 # Copy go mod files
 COPY go.mod go.sum ./
 

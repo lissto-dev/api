@@ -3,7 +3,7 @@ package image
 import (
 	"testing"
 
-	"github.com/lissto.dev/api/pkg/logging"
+	"github.com/lissto-dev/api/pkg/logging"
 	"go.uber.org/zap"
 )
 

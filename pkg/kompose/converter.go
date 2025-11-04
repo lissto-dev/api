@@ -13,7 +13,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/yaml"
 
-	"github.com/lissto.dev/api/pkg/logging"
+	"github.com/lissto-dev/api/pkg/logging"
 )
 
 type Converter struct {

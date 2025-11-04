@@ -3,8 +3,8 @@ package user
 import (
 	"github.com/labstack/echo/v4"
 
-	"github.com/lissto.dev/api/internal/api/common"
-	"github.com/lissto.dev/api/internal/middleware"
+	"github.com/lissto-dev/api/internal/api/common"
+	"github.com/lissto-dev/api/internal/middleware"
 )
 
 // Handler handles user-related HTTP requests
@@ -28,4 +28,3 @@ func (h *Handler) GetCurrentUser(c echo.Context) error {
 	}
 	return c.JSON(200, response)
 }
-

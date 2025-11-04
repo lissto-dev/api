@@ -11,15 +11,15 @@ import (
 	"github.com/labstack/echo/v4"
 	"go.uber.org/zap"
 
-	"github.com/lissto.dev/api/internal/api/common"
-	"github.com/lissto.dev/api/internal/middleware"
-	"github.com/lissto.dev/api/pkg/authz"
-	"github.com/lissto.dev/api/pkg/cache"
-	"github.com/lissto.dev/api/pkg/image"
-	"github.com/lissto.dev/api/pkg/k8s"
-	"github.com/lissto.dev/api/pkg/logging"
-	"github.com/lissto.dev/api/pkg/preprocessor"
-	operatorConfig "github.com/lissto.dev/controller/pkg/config"
+	"github.com/lissto-dev/api/internal/api/common"
+	"github.com/lissto-dev/api/internal/middleware"
+	"github.com/lissto-dev/api/pkg/authz"
+	"github.com/lissto-dev/api/pkg/cache"
+	"github.com/lissto-dev/api/pkg/image"
+	"github.com/lissto-dev/api/pkg/k8s"
+	"github.com/lissto-dev/api/pkg/logging"
+	"github.com/lissto-dev/api/pkg/preprocessor"
+	operatorConfig "github.com/lissto-dev/controller/pkg/config"
 )
 
 // Handler handles stack preparation requests

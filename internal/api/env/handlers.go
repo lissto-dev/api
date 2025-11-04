@@ -6,13 +6,13 @@ import (
 	"github.com/labstack/echo/v4"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"github.com/lissto.dev/api/internal/api/common"
-	"github.com/lissto.dev/api/internal/middleware"
-	"github.com/lissto.dev/api/pkg/authz"
-	"github.com/lissto.dev/api/pkg/k8s"
-	"github.com/lissto.dev/api/pkg/logging"
-	envv1alpha1 "github.com/lissto.dev/controller/api/v1alpha1"
-	operatorConfig "github.com/lissto.dev/controller/pkg/config"
+	"github.com/lissto-dev/api/internal/api/common"
+	"github.com/lissto-dev/api/internal/middleware"
+	"github.com/lissto-dev/api/pkg/authz"
+	"github.com/lissto-dev/api/pkg/k8s"
+	"github.com/lissto-dev/api/pkg/logging"
+	envv1alpha1 "github.com/lissto-dev/controller/api/v1alpha1"
+	operatorConfig "github.com/lissto-dev/controller/pkg/config"
 	"go.uber.org/zap"
 )
 

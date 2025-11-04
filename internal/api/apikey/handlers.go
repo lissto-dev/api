@@ -2,13 +2,13 @@ package apikey
 
 import (
 	"github.com/labstack/echo/v4"
-	"github.com/lissto.dev/api/internal/middleware"
-	"github.com/lissto.dev/api/pkg/authz"
-	"github.com/lissto.dev/api/pkg/config"
-	"github.com/lissto.dev/api/pkg/k8s"
-	"github.com/lissto.dev/api/pkg/logging"
-	"github.com/lissto.dev/api/pkg/response"
-	operatorConfig "github.com/lissto.dev/controller/pkg/config"
+	"github.com/lissto-dev/api/internal/middleware"
+	"github.com/lissto-dev/api/pkg/authz"
+	"github.com/lissto-dev/api/pkg/config"
+	"github.com/lissto-dev/api/pkg/k8s"
+	"github.com/lissto-dev/api/pkg/logging"
+	"github.com/lissto-dev/api/pkg/response"
+	operatorConfig "github.com/lissto-dev/controller/pkg/config"
 	"go.uber.org/zap"
 )
 

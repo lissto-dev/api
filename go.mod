@@ -1,4 +1,4 @@
-module github.com/lissto.dev/api
+module github.com/lissto-dev/api
 
 go 1.24.9
 
@@ -6,9 +6,10 @@ require (
 	github.com/compose-spec/compose-go/v2 v2.9.0
 	github.com/containers/image/v5 v5.36.2
 	github.com/go-playground/validator/v10 v10.28.0
+	github.com/google/uuid v1.6.0
 	github.com/kubernetes/kompose v1.37.0
 	github.com/labstack/echo/v4 v4.12.0
-	github.com/lissto.dev/controller v0.0.0-00010101000000-000000000000
+	github.com/lissto-dev/controller v0.1.1
 	go.uber.org/zap v1.27.0
 	gopkg.in/yaml.v3 v3.0.1
 	k8s.io/api v0.34.1
@@ -53,7 +54,6 @@ require (
 	github.com/golang-jwt/jwt v3.2.2+incompatible // indirect
 	github.com/google/gnostic-models v0.7.0 // indirect
 	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510 // indirect
-	github.com/google/uuid v1.6.0 // indirect
 	github.com/gorilla/mux v1.8.1 // indirect
 	github.com/joho/godotenv v1.5.1 // indirect
 	github.com/josharian/intern v1.0.0 // indirect
@@ -117,5 +117,3 @@ require (
 	sigs.k8s.io/randfill v1.0.0 // indirect
 	sigs.k8s.io/structured-merge-diff/v6 v6.3.0 // indirect
 )
-
-replace github.com/lissto.dev/controller => ../controller

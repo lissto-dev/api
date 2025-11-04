@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/lissto.dev/api/pkg/logging"
+	"github.com/lissto-dev/api/pkg/logging"
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/rest"
@@ -13,7 +13,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	ctrlzap "sigs.k8s.io/controller-runtime/pkg/log/zap"
 
-	envv1alpha1 "github.com/lissto.dev/controller/api/v1alpha1"
+	envv1alpha1 "github.com/lissto-dev/controller/api/v1alpha1"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 )

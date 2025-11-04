@@ -2,10 +2,10 @@ package middleware
 
 import (
 	"github.com/labstack/echo/v4"
-	"github.com/lissto.dev/api/pkg/authz"
-	"github.com/lissto.dev/api/pkg/config"
-	"github.com/lissto.dev/api/pkg/logging"
-	"github.com/lissto.dev/api/pkg/response"
+	"github.com/lissto-dev/api/pkg/authz"
+	"github.com/lissto-dev/api/pkg/config"
+	"github.com/lissto-dev/api/pkg/logging"
+	"github.com/lissto-dev/api/pkg/response"
 	"go.uber.org/zap"
 )
 

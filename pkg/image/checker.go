@@ -10,7 +10,7 @@ import (
 	"github.com/containers/image/v5/image"
 	"github.com/containers/image/v5/manifest"
 	"github.com/containers/image/v5/types"
-	"github.com/lissto.dev/api/pkg/logging"
+	"github.com/lissto-dev/api/pkg/logging"
 	"go.uber.org/zap"
 )
 

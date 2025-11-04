@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/lissto.dev/api/pkg/k8s"
-	"github.com/lissto.dev/api/pkg/logging"
+	"github.com/lissto-dev/api/pkg/k8s"
+	"github.com/lissto-dev/api/pkg/logging"
 	"go.uber.org/zap"
 	"gopkg.in/yaml.v3"
 	corev1 "k8s.io/api/core/v1"

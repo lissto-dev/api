@@ -5,8 +5,8 @@ import (
 	"strings"
 
 	"github.com/compose-spec/compose-go/v2/types"
-	"github.com/lissto.dev/api/internal/api/common"
-	"github.com/lissto.dev/api/pkg/logging"
+	"github.com/lissto-dev/api/internal/api/common"
+	"github.com/lissto-dev/api/pkg/logging"
 	"go.uber.org/zap"
 )
 

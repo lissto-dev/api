@@ -10,12 +10,12 @@ import (
 	"github.com/labstack/echo/v4/middleware"
 	"go.uber.org/zap"
 
-	"github.com/lissto.dev/api/internal/server"
-	"github.com/lissto.dev/api/pkg/authz"
-	"github.com/lissto.dev/api/pkg/config"
-	"github.com/lissto.dev/api/pkg/k8s"
-	"github.com/lissto.dev/api/pkg/logging"
-	operatorConfig "github.com/lissto.dev/controller/pkg/config"
+	"github.com/lissto-dev/api/internal/server"
+	"github.com/lissto-dev/api/pkg/authz"
+	"github.com/lissto-dev/api/pkg/config"
+	"github.com/lissto-dev/api/pkg/k8s"
+	"github.com/lissto-dev/api/pkg/logging"
+	operatorConfig "github.com/lissto-dev/controller/pkg/config"
 )
 
 // CustomValidator wraps the validator
