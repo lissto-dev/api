@@ -30,9 +30,14 @@ jobs:
         with:
           go-version: '1.24'
 
+      - name: Configure Git credentials
+        run: |
+          git config --global credential.helper store
+          echo "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com" > ~/.git-credentials
+          chmod 600 ~/.git-credentials
+
       - name: Configure Git for private modules
         run: |
-          git config --global url."https://${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "https://github.com/"
           git config --global url."https://github.com/lissto-dev/controller-playground".insteadOf "https://github.com/lissto-dev/controller"
 
       - name: Set GOPRIVATE
