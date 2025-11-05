@@ -38,23 +38,20 @@ FROM alpine:latest
 # Install ca-certificates for HTTPS requests
 RUN apk --no-cache add ca-certificates
 
-# Create non-root user
-RUN adduser -D -s /bin/sh appuser
+# Create non-root user with specific UID (65532 is standard nonroot user)
+RUN adduser -D -u 65532 -s /bin/sh nonroot
 
 # Set working directory
-WORKDIR /root/
+WORKDIR /app
 
 # Copy the binary from builder stage
-COPY --from=builder /app/main .
+COPY --from=builder --chown=65532:65532 /app/main .
 
 # Copy API keys example (for reference)
-COPY --from=builder /app/api-keys.example.yaml .
-
-# Change ownership to appuser
-RUN chown -R appuser:appuser /root/
+COPY --from=builder --chown=65532:65532 /app/api-keys.example.yaml .
 
 # Switch to non-root user
-USER appuser
+USER 65532
 
 # Expose port
 EXPOSE 8080
