@@ -23,18 +23,14 @@ ENV GOWORK=off
 # Copy go mod files
 COPY go.mod go.sum ./
 
-# Download dependencies with cache mount
-RUN --mount=type=cache,target=/go/pkg/mod \
-    --mount=type=cache,target=/root/.cache/go-build \
-    go mod download
+# Download dependencies (will be cached as a Docker layer)
+RUN go mod download
 
 # Copy source code
 COPY . .
 
-# Build the application with cache mount
-RUN --mount=type=cache,target=/go/pkg/mod \
-    --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o main ./cmd/server
+# Build the application
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o main ./cmd/server
 
 # Final stage
 FROM alpine:latest

@@ -29,6 +29,8 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: '1.24'
+          cache: true
+          cache-dependency-path: go.sum
 
       # Mint an installation token for a GitHub App installed on the target repo
       - name: Get GitHub App token
