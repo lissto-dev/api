@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"log"
+	"os"
 
 	"github.com/go-playground/validator/v10"
 	"github.com/labstack/echo/v4"
@@ -46,6 +47,15 @@ func main() {
 	}
 	log.Printf("Configuration loaded from %s", configPath)
 
+	// Get API namespace from environment (defaults to lissto-system)
+	apiNamespace := os.Getenv("POD_NAMESPACE")
+	if apiNamespace == "" {
+		apiNamespace = "lissto-system"
+		log.Printf("POD_NAMESPACE not set, defaulting to: %s", apiNamespace)
+	} else {
+		log.Printf("API namespace from POD_NAMESPACE: %s", apiNamespace)
+	}
+
 	// Initialize structured logging
 	if err := logging.InitLogger(cfg.Logging.Level, "json"); err != nil {
 		logging.Logger.Fatal("Failed to initialize logging", zap.Error(err))
@@ -75,10 +85,12 @@ func main() {
 	}
 	logging.Logger.Info("Global namespace ready", zap.String("namespace", cfg.Namespaces.Global))
 
-	// Load API keys from Kubernetes secret
-	apiKeys, err := config.LoadAPIKeysFromSecret(ctx, k8sClient, cfg.Namespaces.Global, config.SecretName)
+	// Load API keys from Kubernetes secret (in API's own namespace)
+	apiKeys, err := config.LoadAPIKeysFromSecret(ctx, k8sClient, apiNamespace, config.SecretName)
 	if err != nil {
-		logging.Logger.Fatal("Failed to load API keys from secret", zap.Error(err))
+		logging.Logger.Fatal("Failed to load API keys from secret",
+			zap.String("namespace", apiNamespace),
+			zap.Error(err))
 	}
 
 	// Ensure admin key exists, generate if not
@@ -88,17 +100,21 @@ func main() {
 		logging.Logger.Fatal("Failed to ensure admin key", zap.Error(err))
 	}
 
-	// If admin key was generated, save it to the secret
+	// If admin key was generated, save it to the secret (in API's own namespace)
 	if adminKeyGenerated {
-		if err := config.SaveAPIKeysToSecret(ctx, k8sClient, cfg.Namespaces.Global, config.SecretName, apiKeys); err != nil {
-			logging.Logger.Fatal("Failed to save admin key to secret", zap.Error(err))
+		if err := config.SaveAPIKeysToSecret(ctx, k8sClient, apiNamespace, config.SecretName, apiKeys); err != nil {
+			logging.Logger.Fatal("Failed to save admin key to secret",
+				zap.String("namespace", apiNamespace),
+				zap.Error(err))
 		}
 		logging.Logger.Info("Admin key generated and saved to secret",
-			zap.String("namespace", cfg.Namespaces.Global),
+			zap.String("namespace", apiNamespace),
 			zap.String("secret", config.SecretName))
 	}
 
-	logging.Logger.Info("API keys loaded", zap.Int("count", len(apiKeys)))
+	logging.Logger.Info("API keys loaded",
+		zap.Int("count", len(apiKeys)),
+		zap.String("namespace", apiNamespace))
 
 	// Create Echo instance
 	e := echo.New()
@@ -113,7 +129,7 @@ func main() {
 	e.Use(middleware.CORS())
 
 	// Initialize and start server
-	srv := server.New(e, apiKeys, cfg, k8sClient, authorizer, nsManager)
+	srv := server.New(e, apiKeys, cfg, k8sClient, authorizer, nsManager, apiNamespace)
 	logging.Logger.Info("Server initialized")
 
 	if err := srv.Start(); err != nil {

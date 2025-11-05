@@ -17,6 +17,7 @@ type Handler struct {
 	k8sClient      *k8s.Client
 	config         *operatorConfig.Config
 	apiKeysUpdater func([]config.APIKey) error
+	namespace      string // namespace where API keys are stored
 }
 
 // NewHandler creates a new API key handler
@@ -24,11 +25,13 @@ func NewHandler(
 	k8sClient *k8s.Client,
 	cfg *operatorConfig.Config,
 	apiKeysUpdater func([]config.APIKey) error,
+	namespace string,
 ) *Handler {
 	return &Handler{
 		k8sClient:      k8sClient,
 		config:         cfg,
 		apiKeysUpdater: apiKeysUpdater,
+		namespace:      namespace,
 	}
 }
 
@@ -72,11 +75,17 @@ func (h *Handler) CreateAPIKey(c echo.Context) error {
 		return response.BadRequest(c, err.Error())
 	}
 
-	// Validate role
+	// Validate role - admin keys cannot be created via API
+	if req.Role == "admin" {
+		logging.Logger.Warn("Attempt to create admin API key via API",
+			zap.String("user", user.Name))
+		return response.Forbidden(c, "Admin keys cannot be created via API. Admin keys are auto-generated on first deployment.")
+	}
+
 	role := authz.ParseRole(req.Role)
 	if role == authz.User && req.Role != "user" {
 		// ParseRole defaults to User for unknown roles, check explicitly
-		return response.BadRequest(c, "Invalid role. Must be one of: admin, deploy, user")
+		return response.BadRequest(c, "Invalid role. Must be one of: deploy, user")
 	}
 
 	// Generate API key with role-based prefix
@@ -94,11 +103,13 @@ func (h *Handler) CreateAPIKey(c echo.Context) error {
 		SlackUserID: req.SlackUserID,
 	}
 
-	// Load current keys from secret
+	// Load current keys from secret (from API's own namespace)
 	ctx := c.Request().Context()
-	currentKeys, err := config.LoadAPIKeysFromSecret(ctx, h.k8sClient, h.config.Namespaces.Global, config.SecretName)
+	currentKeys, err := config.LoadAPIKeysFromSecret(ctx, h.k8sClient, h.namespace, config.SecretName)
 	if err != nil {
-		logging.Logger.Error("Failed to load API keys from secret", zap.Error(err))
+		logging.Logger.Error("Failed to load API keys from secret",
+			zap.String("namespace", h.namespace),
+			zap.Error(err))
 		return response.InternalServerError(c, "Failed to load API keys")
 	}
 
@@ -112,9 +123,11 @@ func (h *Handler) CreateAPIKey(c echo.Context) error {
 	// Add new key
 	updatedKeys := append(currentKeys, newAPIKey)
 
-	// Save to secret
-	if err := config.SaveAPIKeysToSecret(ctx, h.k8sClient, h.config.Namespaces.Global, config.SecretName, updatedKeys); err != nil {
-		logging.Logger.Error("Failed to save API key to secret", zap.Error(err))
+	// Save to secret (in API's own namespace)
+	if err := config.SaveAPIKeysToSecret(ctx, h.k8sClient, h.namespace, config.SecretName, updatedKeys); err != nil {
+		logging.Logger.Error("Failed to save API key to secret",
+			zap.String("namespace", h.namespace),
+			zap.Error(err))
 		return response.InternalServerError(c, "Failed to save API key")
 	}
 

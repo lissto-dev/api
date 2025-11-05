@@ -56,6 +56,7 @@ func New(
 	k8sClient *k8s.Client,
 	authorizer *authz.Authorizer,
 	nsManager *authz.NamespaceManager,
+	apiNamespace string, // namespace where API is running (for API keys storage)
 ) *Server {
 	// Create server instance
 	srv := &Server{
@@ -77,10 +78,11 @@ func New(
 	prepareHandler := prepare.NewHandler(k8sClient, authorizer, nsManager, cfg, memCache)
 
 	// Create API key handler with updater function
+	// API keys are stored in the same namespace where API is running
 	apiKeyUpdater := func(keys []config.APIKey) error {
 		return srv.UpdateAPIKeys(keys)
 	}
-	apiKeyHandler := apikey.NewHandler(k8sClient, cfg, apiKeyUpdater)
+	apiKeyHandler := apikey.NewHandler(k8sClient, cfg, apiKeyUpdater, apiNamespace)
 
 	// API routes with authentication
 	// Use function-based middleware to get current keys dynamically
