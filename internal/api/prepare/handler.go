@@ -40,8 +40,14 @@ func NewHandler(
 	config *operatorConfig.Config,
 	cache cache.Cache,
 ) *Handler {
-	// Create image existence checker
-	imageChecker := image.NewImageExistenceChecker()
+	// Create image existence checker with K8s authentication
+	// This will automatically use:
+	// - Image pull secrets from the pod's service account
+	// - Node IAM credentials (ECR on AWS, Workload Identity on GCP, etc.)
+	// - Docker config files and credential helpers
+	// Falls back to anonymous access if authentication is not available
+	ctx := context.Background()
+	imageChecker := image.NewImageExistenceCheckerWithK8sAuth(ctx)
 
 	// Create image resolver with global config
 	imageResolver := image.NewImageResolver(
