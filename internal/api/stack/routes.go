@@ -10,5 +10,6 @@ func RegisterRoutes(g *echo.Group, handler *Handler) {
 	g.GET("", handler.GetStacks)
 	g.GET("/:id", handler.GetStack)
 	g.POST("", handler.CreateStack)
+	g.PUT("/:id", handler.UpdateStack)
 	g.DELETE("/:id", handler.DeleteStack)
 }

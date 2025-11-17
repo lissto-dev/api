@@ -15,6 +15,7 @@ import (
 	"github.com/lissto-dev/api/internal/middleware"
 	"github.com/lissto-dev/api/pkg/authz"
 	"github.com/lissto-dev/api/pkg/cache"
+	"github.com/lissto-dev/api/pkg/compose"
 	"github.com/lissto-dev/api/pkg/image"
 	"github.com/lissto-dev/api/pkg/k8s"
 	"github.com/lissto-dev/api/pkg/logging"
@@ -132,6 +133,13 @@ func (h *Handler) PrepareStack(c echo.Context) error {
 		return c.String(400, "Invalid Docker Compose content")
 	}
 
+	// Extract x-lissto configuration from compose file
+	lisstoConfig := compose.ExtractLisstoConfig(project)
+	logging.Logger.Info("Extracted x-lissto configuration",
+		zap.String("registry", lisstoConfig.Registry),
+		zap.String("repository", lisstoConfig.Repository),
+		zap.String("repositoryPrefix", lisstoConfig.RepositoryPrefix))
+
 	// Create expose preprocessor for checking exposed services and calculating URLs
 	exposePreprocessor := preprocessor.NewExposePreprocessor(
 		h.config.Stacks.Public.HostSuffix,
@@ -206,7 +214,16 @@ func (h *Handler) PrepareStack(c echo.Context) error {
 				zap.String("commit", req.Commit),
 				zap.String("branch", req.Branch))
 
-			result, err := h.imageResolver.ResolveImageDetailed(service, req.Commit, req.Branch)
+			result, err := h.imageResolver.ResolveImageDetailed(
+				service,
+				image.ResolutionConfig{
+					Commit:            req.Commit,
+					Branch:            req.Branch,
+					ComposeRegistry:   lisstoConfig.Registry,
+					ComposeRepository: lisstoConfig.Repository,
+					ComposePrefix:     lisstoConfig.RepositoryPrefix,
+				},
+			)
 			if err != nil {
 				logging.Logger.Error("Failed to resolve image for service",
 					zap.String("service", serviceName),

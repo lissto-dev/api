@@ -21,8 +21,9 @@ type CreateBlueprintRequest struct {
 }
 
 // Interface methods for namespace determination
-func (r *CreateBlueprintRequest) GetBranch() string { return r.Branch }
-func (r *CreateBlueprintRequest) GetAuthor() string { return r.Author }
+func (r *CreateBlueprintRequest) GetBranch() string     { return r.Branch }
+func (r *CreateBlueprintRequest) GetAuthor() string     { return r.Author }
+func (r *CreateBlueprintRequest) GetRepository() string { return r.Repository }
 
 // HashDockerCompose generates SHA256 hash of docker-compose content
 func (r *CreateBlueprintRequest) HashDockerCompose() string {

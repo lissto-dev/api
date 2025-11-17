@@ -142,7 +142,7 @@ func (h *Handler) CreateStack(c echo.Context) error {
 	perm := h.authorizer.CanAccess(user.Role, authz.ActionCreate, authz.ResourceStack, namespace, user.Name)
 	if !perm.Allowed {
 		logging.LogDeniedWithIP("insufficient_permissions", user.Name, "POST /stacks", c.RealIP())
-		return c.NoContent(403)
+		return c.String(403, fmt.Sprintf("Permission denied: %s", perm.Reason))
 	}
 
 	// Ensure namespace exists
@@ -256,12 +256,23 @@ func (h *Handler) CreateStack(c echo.Context) error {
 	}
 
 	// Step 2: Create Stack CRD
+	// Extract blueprint title from annotations
+	blueprintTitle := blueprint.Name
+	if blueprint.Annotations != nil {
+		if title, ok := blueprint.Annotations["lissto.dev/title"]; ok && title != "" {
+			blueprintTitle = title
+		}
+	}
+
 	stack := &envv1alpha1.Stack{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      stackName,
 			Namespace: namespace,
 			Labels: map[string]string{
 				"app.kubernetes.io/managed-by": "lissto",
+			},
+			Annotations: map[string]string{
+				"lissto.dev/blueprint-title": blueprintTitle,
 			},
 		},
 		Spec: envv1alpha1.StackSpec{
@@ -349,7 +360,7 @@ func (h *Handler) GetStacks(c echo.Context) error {
 	)
 
 	if len(allowedNS) == 0 {
-		return c.NoContent(403)
+		return c.String(403, "Permission denied: no accessible namespaces")
 	}
 
 	var allStacks []envv1alpha1.Stack
@@ -391,7 +402,7 @@ func (h *Handler) GetStack(c echo.Context) error {
 	)
 
 	if len(allowedNS) == 0 {
-		return c.NoContent(403)
+		return c.String(403, "Permission denied: no accessible namespaces")
 	}
 
 	// Try to find in allowed namespaces
@@ -406,7 +417,7 @@ func (h *Handler) GetStack(c echo.Context) error {
 
 		// If not found in global, search all developer namespaces
 		// This is a simplified approach - in production you might want to list all namespaces
-		return c.NoContent(404)
+		return c.String(404, fmt.Sprintf("Stack '%s' not found in any accessible namespace", name))
 	}
 
 	// Try each allowed namespace
@@ -418,7 +429,7 @@ func (h *Handler) GetStack(c echo.Context) error {
 		}
 	}
 
-	return c.NoContent(404)
+	return c.String(404, fmt.Sprintf("Stack '%s' not found in your namespace", name))
 }
 
 // DeleteStack handles DELETE /stacks/:id
@@ -435,7 +446,7 @@ func (h *Handler) DeleteStack(c echo.Context) error {
 	)
 
 	if len(allowedNS) == 0 {
-		return c.NoContent(403)
+		return c.String(403, "Permission denied: no accessible namespaces")
 	}
 
 	// Try to find and delete in allowed namespaces
@@ -448,7 +459,7 @@ func (h *Handler) DeleteStack(c echo.Context) error {
 
 		// If not found in global, search all developer namespaces
 		// This is a simplified approach - in production you might want to list all namespaces
-		return c.NoContent(404)
+		return c.String(404, fmt.Sprintf("Stack '%s' not found in any accessible namespace", name))
 	}
 
 	// Try each allowed namespace
@@ -458,7 +469,132 @@ func (h *Handler) DeleteStack(c echo.Context) error {
 		}
 	}
 
-	return c.NoContent(404)
+	return c.String(404, fmt.Sprintf("Stack '%s' not found in your namespace", name))
+}
+
+// UpdateStack handles PUT /stacks/:id
+func (h *Handler) UpdateStack(c echo.Context) error {
+	name := c.Param("id")
+	user, _ := middleware.GetUserFromContext(c)
+
+	// Parse request body - accept both image info and simple strings
+	var req struct {
+		Images map[string]interface{} `json:"images"`
+	}
+	if err := c.Bind(&req); err != nil {
+		return c.String(400, "Invalid request body")
+	}
+
+	if len(req.Images) == 0 {
+		return c.String(400, "No images provided")
+	}
+
+	// Get allowed namespaces for update
+	allowedNS := h.authorizer.GetAllowedNamespaces(
+		user.Role,
+		authz.ActionUpdate,
+		authz.ResourceStack,
+		user.Name,
+	)
+
+	if len(allowedNS) == 0 {
+		return c.String(403, "Permission denied: no accessible namespaces")
+	}
+
+	// Try to find and update in allowed namespaces
+	if allowedNS[0] == "*" {
+		// Admin: search in all namespaces
+		// First try global namespace
+		stack, err := h.k8sClient.GetStack(c.Request().Context(), h.nsManager.GetGlobalNamespace(), name)
+		if err == nil {
+			return h.updateStackImages(c, stack, req.Images, user.Name)
+		}
+
+		// If not found in global, try developer namespace
+		userNamespace := h.nsManager.GetDeveloperNamespace(user.Name)
+		stack, err = h.k8sClient.GetStack(c.Request().Context(), userNamespace, name)
+		if err == nil {
+			return h.updateStackImages(c, stack, req.Images, user.Name)
+		}
+
+		return c.String(404, fmt.Sprintf("Stack '%s' not found in any accessible namespace", name))
+	}
+
+	// Try each allowed namespace
+	for _, ns := range allowedNS {
+		stack, err := h.k8sClient.GetStack(c.Request().Context(), ns, name)
+		if err == nil {
+			return h.updateStackImages(c, stack, req.Images, user.Name)
+		}
+	}
+
+	return c.String(404, fmt.Sprintf("Stack '%s' not found in your namespace", name))
+}
+
+// updateStackImages is a helper to update stack images
+func (h *Handler) updateStackImages(c echo.Context, stack *envv1alpha1.Stack, images map[string]interface{}, userName string) error {
+	// Build updated images map
+	updatedImages := make(map[string]envv1alpha1.ImageInfo)
+	for service, imageData := range images {
+		// Get existing info to preserve URL
+		existingInfo := stack.Spec.Images[service]
+
+		var newImage, newDigest string
+
+		// Handle both string (digest only) and object (digest + tag) formats
+		switch v := imageData.(type) {
+		case string:
+			// Legacy format: just digest, preserve existing tag
+			newDigest = v
+			newImage = existingInfo.Image
+		case map[string]interface{}:
+			// New format: object with digest and tag
+			if digest, ok := v["digest"].(string); ok {
+				newDigest = digest
+			}
+			if image, ok := v["image"].(string); ok && image != "" {
+				newImage = image
+			} else {
+				newImage = existingInfo.Image // Fallback to existing tag
+			}
+		default:
+			// Fallback: preserve existing
+			newDigest = existingInfo.Digest
+			newImage = existingInfo.Image
+		}
+
+		updatedImages[service] = envv1alpha1.ImageInfo{
+			Digest: newDigest,
+			Image:  newImage,         // Use new tag if provided
+			URL:    existingInfo.URL, // Preserve URL
+		}
+	}
+
+	// Update stack images
+	stack.Spec.Images = updatedImages
+
+	// Update in Kubernetes
+	if err := h.k8sClient.UpdateStack(c.Request().Context(), stack); err != nil {
+		logging.Logger.Error("Failed to update stack",
+			zap.String("namespace", stack.Namespace),
+			zap.String("name", stack.Name),
+			zap.Error(err))
+		return c.String(500, "Failed to update stack")
+	}
+
+	logging.Logger.Info("Stack updated successfully",
+		zap.String("stack_name", stack.Name),
+		zap.String("namespace", stack.Namespace),
+		zap.String("user", userName),
+		zap.Int("updated_services", len(updatedImages)))
+
+	// Return updated stack identifier
+	identifier := common.GenerateScopedIdentifier(stack.Namespace, stack.Name)
+	return c.JSON(200, map[string]interface{}{
+		"data": map[string]string{
+			"id": identifier,
+		},
+	})
 }
 
 // parseDockerCompose parses Docker Compose content into a project
@@ -507,11 +643,15 @@ func (h *Handler) generateKubernetesManifests(project *types.Project, namespace,
 		return "", fmt.Errorf("kompose conversion failed: %w", err)
 	}
 
-	// 3. Post-process: inject stack labels to pod templates
+	// 3. Post-process: normalize PVC accessModes to ReadWriteOnce
+	pvcNormalizer := postprocessor.NewPVCAccessModeNormalizer()
+	objects = pvcNormalizer.NormalizeAccessModes(objects)
+
+	// 4. Post-process: inject stack labels to pod templates
 	labelInjector := postprocessor.NewStackLabelInjector()
 	objects = labelInjector.InjectLabels(objects, stackName)
 
-	// 4. Serialize to YAML
+	// 5. Serialize to YAML
 	yamlManifests, err := converter.SerializeToYAML(objects)
 	if err != nil {
 		return "", fmt.Errorf("YAML serialization failed: %w", err)

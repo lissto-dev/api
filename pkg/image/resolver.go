@@ -16,6 +16,15 @@ type TagCandidate struct {
 	Source string // "original", "label", "commit", "branch", "latest"
 }
 
+// ResolutionConfig contains configuration for image resolution
+type ResolutionConfig struct {
+	Commit            string // Git commit hash for commit-based tags
+	Branch            string // Git branch name for branch-based tags
+	ComposeRegistry   string // Registry from x-lissto.registry
+	ComposeRepository string // Single repository from x-lissto.repository (for monorepo)
+	ComposePrefix     string // Repository prefix from x-lissto.repositoryPrefix
+}
+
 // ImageResolver handles image resolution with registry/repository/tag priority
 type ImageResolver struct {
 	globalRegistry string
@@ -48,15 +57,15 @@ func NewImageResolverWithPlatform(globalRegistry, globalPrefix string, imageChec
 }
 
 // ResolveImage determines the final container image URL for a service
-func (ir *ImageResolver) ResolveImage(service types.ServiceConfig, commit, branch string) (string, error) {
+func (ir *ImageResolver) ResolveImage(service types.ServiceConfig, config ResolutionConfig) (string, error) {
 	// Step 1: Resolve registry
-	registry := ir.resolveRegistry(service)
+	registry := ir.ResolveRegistryWithCompose(service, config.ComposeRegistry)
 
 	// Step 2: Resolve image name
-	imageName := ir.resolveImageName(service)
+	imageName := ir.ResolveImageNameWithCompose(service, config.ComposeRepository, config.ComposePrefix)
 
 	// Step 3: Resolve tag candidates
-	tagCandidates := ir.resolveTag(service, commit, branch)
+	tagCandidates := ir.resolveTag(service, config.Commit, config.Branch)
 
 	// Step 4: Check existence for each candidate
 	for _, candidate := range tagCandidates {
@@ -86,12 +95,16 @@ func (ir *ImageResolver) ResolveImage(service types.ServiceConfig, commit, branc
 	return "", fmt.Errorf("no existing image found for service %s", service.Name)
 }
 
-// resolveRegistry determines the registry for a service
-// Priority: Service label → Global registry → No registry
-func (ir *ImageResolver) resolveRegistry(service types.ServiceConfig) string {
+// ResolveRegistryWithCompose determines the registry for a service with compose-level config
+// Priority: Service label → Compose registry (x-lissto) → Global registry → No registry
+func (ir *ImageResolver) ResolveRegistryWithCompose(service types.ServiceConfig, composeRegistry string) string {
 	// Service-specific label always takes precedence
 	if registry := ir.getLabelValue(service.Labels, "lissto.dev/registry", ""); registry != "" {
 		return registry
+	}
+	// Check compose-level registry from x-lissto
+	if composeRegistry != "" {
+		return composeRegistry
 	}
 	// Fall back to global config
 	if ir.globalRegistry != "" {
@@ -100,12 +113,20 @@ func (ir *ImageResolver) resolveRegistry(service types.ServiceConfig) string {
 	return ""
 }
 
-// resolveImageName determines the image name for a service
-// Priority: Service label → Global prefix + service name → Service name
-func (ir *ImageResolver) resolveImageName(service types.ServiceConfig) string {
+// ResolveImageNameWithCompose determines the image name for a service with compose-level config
+// Priority: Service label → Compose repository (x-lissto.repository) → Compose prefix (x-lissto.repositoryPrefix) + service name → Global prefix + service name → Service name
+func (ir *ImageResolver) ResolveImageNameWithCompose(service types.ServiceConfig, composeRepository, composePrefix string) string {
 	// Service-specific label always takes precedence
 	if repo := ir.getLabelValue(service.Labels, "lissto.dev/repository", ""); repo != "" {
 		return repo
+	}
+	// Check compose-level repository (single image for all services)
+	if composeRepository != "" {
+		return composeRepository
+	}
+	// Check compose-level prefix from x-lissto
+	if composePrefix != "" {
+		return composePrefix + service.Name
 	}
 	// Fall back to global prefix + service name
 	if ir.globalPrefix != "" {
@@ -216,23 +237,23 @@ type DetailedImageResolutionResult struct {
 // ResolveImageWithCandidates tries multiple candidates, returns which worked
 func (ir *ImageResolver) ResolveImageWithCandidates(
 	service types.ServiceConfig,
-	commit, branch string,
+	config ResolutionConfig,
 ) (*ImageResolutionResult, error) {
 	// Step 1: Resolve registry
-	registry := ir.resolveRegistry(service)
+	registry := ir.ResolveRegistryWithCompose(service, config.ComposeRegistry)
 
 	// Step 2: Resolve image name
-	imageName := ir.resolveImageName(service)
+	imageName := ir.ResolveImageNameWithCompose(service, config.ComposeRepository, config.ComposePrefix)
 
 	// Step 3: Resolve tag candidates
-	tagCandidates := ir.resolveTag(service, commit, branch)
+	tagCandidates := ir.resolveTag(service, config.Commit, config.Branch)
 
 	logging.Logger.Info("Resolving image with candidates",
 		zap.String("service", service.Name),
 		zap.String("registry", registry),
 		zap.String("image_name", imageName),
-		zap.String("commit", commit),
-		zap.String("branch", branch),
+		zap.String("commit", config.Commit),
+		zap.String("branch", config.Branch),
 		zap.Int("candidates_count", len(tagCandidates)))
 
 	// Log all candidates that will be tried
@@ -290,26 +311,26 @@ func (ir *ImageResolver) ResolveImageWithCandidates(
 	return nil, fmt.Errorf("no existing image found for service %s", service.Name)
 }
 
-// ResolveImageWithCandidatesDetailed tries multiple candidates and returns detailed info about all attempts
+// ResolveImageDetailed tries multiple candidates and returns detailed info about all attempts
 func (ir *ImageResolver) ResolveImageDetailed(
 	service types.ServiceConfig,
-	commit, branch string,
+	config ResolutionConfig,
 ) (*DetailedImageResolutionResult, error) {
 	// Step 1: Resolve registry
-	registry := ir.resolveRegistry(service)
+	registry := ir.ResolveRegistryWithCompose(service, config.ComposeRegistry)
 
 	// Step 2: Resolve image name
-	imageName := ir.resolveImageName(service)
+	imageName := ir.ResolveImageNameWithCompose(service, config.ComposeRepository, config.ComposePrefix)
 
 	// Step 3: Resolve tag candidates
-	tagCandidates := ir.resolveTag(service, commit, branch)
+	tagCandidates := ir.resolveTag(service, config.Commit, config.Branch)
 
 	logging.Logger.Info("Resolving image with detailed candidates",
 		zap.String("service", service.Name),
 		zap.String("registry", registry),
 		zap.String("image_name", imageName),
-		zap.String("commit", commit),
-		zap.String("branch", branch),
+		zap.String("commit", config.Commit),
+		zap.String("branch", config.Branch),
 		zap.Int("candidates_count", len(tagCandidates)))
 
 	// Track all candidates

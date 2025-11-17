@@ -1,6 +1,7 @@
 package server
 
 import (
+	"os"
 	"sync"
 
 	"github.com/labstack/echo/v4"
@@ -23,11 +24,13 @@ import (
 
 // Server represents the API server
 type Server struct {
-	echo      *echo.Echo
-	apiKeys   []config.APIKey
-	apiKeysMu sync.RWMutex
-	config    *operatorConfig.Config
-	k8sClient *k8s.Client
+	echo       *echo.Echo
+	apiKeys    []config.APIKey
+	apiKeysMu  sync.RWMutex
+	config     *operatorConfig.Config
+	k8sClient  *k8s.Client
+	instanceID string
+	publicURL  string
 }
 
 // GetAPIKeys returns a copy of the current API keys
@@ -57,13 +60,17 @@ func New(
 	authorizer *authz.Authorizer,
 	nsManager *authz.NamespaceManager,
 	apiNamespace string, // namespace where API is running (for API keys storage)
+	instanceID string, // API instance ID for verification
+	publicURL string, // Public URL if configured
 ) *Server {
 	// Create server instance
 	srv := &Server{
-		echo:      e,
-		apiKeys:   apiKeys,
-		config:    cfg,
-		k8sClient: k8sClient,
+		echo:       e,
+		apiKeys:    apiKeys,
+		config:     cfg,
+		k8sClient:  k8sClient,
+		instanceID: instanceID,
+		publicURL:  publicURL,
 	}
 
 	// Create in-memory cache for prepare results
@@ -107,16 +114,36 @@ func New(
 	apikey.RegisterRoutes(api, apiKeyHandler)
 
 	// Health check (no auth required)
-	e.GET("/health", func(c echo.Context) error {
-		return c.NoContent(200)
-	})
+	// Supports ?info=true to return API information (public URL and API ID)
+	e.GET("/health", srv.handleHealth)
 
 	return srv
 }
 
+// handleHealth handles the health check endpoint
+// Returns 200 OK for normal health checks
+// Returns JSON with API info when ?info=true is specified
+func (s *Server) handleHealth(c echo.Context) error {
+	// Check if info parameter is set
+	if c.QueryParam("info") == "true" {
+		info := map[string]string{
+			"public_url": s.publicURL,
+			"api_id":     s.instanceID,
+		}
+		return c.JSON(200, info)
+	}
+
+	// Normal health check - just return 200
+	return c.NoContent(200)
+}
+
 // Start starts the API server
 func (s *Server) Start() error {
-	port := ":8080"
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+	port = ":" + port
 	logging.Logger.Info("Starting server", zap.String("port", port))
 	return s.echo.Start(port)
 }

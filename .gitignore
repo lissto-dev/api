@@ -75,3 +75,6 @@ kubeconfig
 # Local development binaries
 /main
 /server
+
+# Local development files
+dev/

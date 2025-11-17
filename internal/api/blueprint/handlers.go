@@ -61,10 +61,31 @@ func (h *Handler) CreateBlueprint(c echo.Context) error {
 		zap.String("role", user.Role.String()),
 		zap.String("branch", req.Branch),
 		zap.String("author", req.Author),
+		zap.String("repository", req.Repository),
 		zap.String("ip", c.RealIP()))
 
-	// Determine target namespace
-	namespace, err := h.authorizer.DetermineNamespace(user.Role, user.Name, &req)
+	// Repository is required for all roles
+	if req.Repository == "" {
+		logging.Logger.Error("Repository is required",
+			zap.String("user", user.Name),
+			zap.String("role", user.Role.String()))
+		return c.String(400, "Repository field is required")
+	}
+
+	// Validate repository and get config
+	repoKey, valid := h.config.ValidateRepository(req.Repository)
+	if !valid {
+		logging.Logger.Error("Unknown repository",
+			zap.String("user", user.Name),
+			zap.String("repository", req.Repository))
+		return c.String(400, fmt.Sprintf("Repository '%s' is not configured. Only configured repositories are allowed.", req.Repository))
+	}
+
+	// Get the repository configuration for title extraction
+	repoConfig := h.config.Repos[repoKey]
+
+	// Determine target namespace using blueprint-specific method
+	namespace, err := h.authorizer.DetermineNamespaceForBlueprint(user.Role, user.Name, &req)
 	if err != nil {
 		logging.Logger.Error("Namespace determination failed",
 			zap.String("user", user.Name),
@@ -90,7 +111,7 @@ func (h *Handler) CreateBlueprint(c echo.Context) error {
 			zap.String("resource", string(authz.ResourceBlueprint)),
 			zap.String("namespace", namespace),
 			zap.String("reason", perm.Reason))
-		return c.NoContent(403)
+		return c.String(403, fmt.Sprintf("Permission denied: %s", perm.Reason))
 	}
 
 	// Hash the docker-compose content
@@ -166,7 +187,8 @@ func (h *Handler) CreateBlueprint(c echo.Context) error {
 
 	// Parse docker-compose to extract metadata (title, services)
 	// If parsing fails, don't create blueprint
-	metadata, err := compose.ParseBlueprintMetadata(req.Compose, req.Repository)
+	// Pass repo config for title extraction with priority: x-lissto.title → repo.Name → repo.URL
+	metadata, err := compose.ParseBlueprintMetadata(req.Compose, repoConfig)
 	if err != nil {
 		logging.Logger.Error("Failed to parse docker-compose",
 			zap.String("user", user.Name),
@@ -289,7 +311,7 @@ func (h *Handler) GetBlueprints(c echo.Context) error {
 	)
 
 	if len(allowedNS) == 0 {
-		return c.NoContent(403)
+		return c.String(403, "Permission denied: no accessible namespaces")
 	}
 
 	var allBlueprints []BlueprintResponse
@@ -335,7 +357,7 @@ func (h *Handler) GetBlueprint(c echo.Context) error {
 	)
 
 	if len(allowedNS) == 0 {
-		return c.NoContent(403)
+		return c.String(403, "Permission denied: no accessible namespaces")
 	}
 
 	// Try to find in allowed namespaces
@@ -349,7 +371,7 @@ func (h *Handler) GetBlueprint(c echo.Context) error {
 
 		// If not found in global, search all developer namespaces
 		// This is a simplified approach - in production you might want to list all namespaces
-		return c.NoContent(404)
+		return c.String(404, fmt.Sprintf("Blueprint '%s' not found in any accessible namespace", name))
 	}
 
 	// Try each allowed namespace
@@ -360,7 +382,7 @@ func (h *Handler) GetBlueprint(c echo.Context) error {
 		}
 	}
 
-	return c.NoContent(404)
+	return c.String(404, fmt.Sprintf("Blueprint '%s' not found in your namespace", name))
 }
 
 // DeleteBlueprint handles DELETE /blueprints/:id
@@ -377,7 +399,7 @@ func (h *Handler) DeleteBlueprint(c echo.Context) error {
 	)
 
 	if len(allowedNS) == 0 {
-		return c.NoContent(403)
+		return c.String(403, "Permission denied: no accessible namespaces")
 	}
 
 	// Try to find and delete in allowed namespaces
@@ -390,7 +412,7 @@ func (h *Handler) DeleteBlueprint(c echo.Context) error {
 
 		// If not found in global, search all developer namespaces
 		// This is a simplified approach - in production you might want to list all namespaces
-		return c.NoContent(404)
+		return c.String(404, fmt.Sprintf("Blueprint '%s' not found in any accessible namespace", name))
 	}
 
 	// Try each allowed namespace
@@ -400,5 +422,5 @@ func (h *Handler) DeleteBlueprint(c echo.Context) error {
 		}
 	}
 
-	return c.NoContent(404)
+	return c.String(404, fmt.Sprintf("Blueprint '%s' not found in your namespace", name))
 }

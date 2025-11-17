@@ -89,12 +89,17 @@ func (iec *ImageExistenceChecker) CheckImageExists(imageURL string) (*ImageMetad
 		if err == nil {
 			return metadata, nil
 		}
-		logging.Logger.Debug("Authenticated image check failed, falling back to anonymous",
+		logging.Logger.Info("Authenticated image check failed, falling back to containers/image",
 			zap.String("image", imageURL),
 			zap.Error(err))
+	} else {
+		logging.Logger.Debug("No keychain available, using anonymous access",
+			zap.String("image", imageURL))
 	}
 
 	// Fallback to existing containers/image implementation
+	logging.Logger.Info("Attempting image check with containers/image library",
+		zap.String("image", imageURL))
 	return iec.checkImageWithContainersImage(ctx, imageURL, runtime.GOOS, runtime.GOARCH)
 }
 
@@ -210,18 +215,24 @@ func (iec *ImageExistenceChecker) checkImageWithContainersImage(ctx context.Cont
 
 // checkImageWithAuth uses go-containerregistry with k8schain authentication
 func (iec *ImageExistenceChecker) checkImageWithAuth(ctx context.Context, imageURL, targetOS, targetArch string) (*ImageMetadata, error) {
-	logging.Logger.Debug("Checking image with authentication",
+	logging.Logger.Info("Checking image with authentication (go-containerregistry)",
 		zap.String("image", imageURL),
 		zap.String("platform", targetOS+"/"+targetArch))
 
 	// Parse image reference
 	ref, err := name.ParseReference(imageURL)
 	if err != nil {
-		logging.Logger.Debug("Failed to parse image reference with go-containerregistry",
+		logging.Logger.Warn("Failed to parse image reference with go-containerregistry",
 			zap.String("image", imageURL),
 			zap.Error(err))
 		return nil, fmt.Errorf("failed to parse image reference: %w", err)
 	}
+
+	// Log the registry to see if ECR is detected
+	logging.Logger.Info("Parsed image reference",
+		zap.String("image", imageURL),
+		zap.String("registry", ref.Context().RegistryStr()),
+		zap.String("repository", ref.Context().RepositoryStr()))
 
 	// Set platform options
 	platform := v1.Platform{
@@ -232,11 +243,16 @@ func (iec *ImageExistenceChecker) checkImageWithAuth(ctx context.Context, imageU
 	// Fetch image descriptor with authentication
 	desc, err := remote.Get(ref, remote.WithAuthFromKeychain(iec.keychain), remote.WithPlatform(platform))
 	if err != nil {
-		logging.Logger.Debug("Failed to fetch image descriptor",
+		logging.Logger.Warn("Failed to fetch image descriptor with authentication",
 			zap.String("image", imageURL),
+			zap.String("registry", ref.Context().RegistryStr()),
 			zap.Error(err))
 		return nil, err
 	}
+
+	logging.Logger.Info("Successfully fetched image descriptor with authentication",
+		zap.String("image", imageURL),
+		zap.String("registry", ref.Context().RegistryStr()))
 
 	// Get the image
 	img, err := desc.Image()

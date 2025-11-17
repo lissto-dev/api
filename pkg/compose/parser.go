@@ -8,6 +8,7 @@ import (
 
 	"github.com/compose-spec/compose-go/v2/loader"
 	"github.com/compose-spec/compose-go/v2/types"
+	"github.com/lissto-dev/controller/pkg/config"
 )
 
 // ServiceMetadata contains categorized service information
@@ -22,10 +23,17 @@ type BlueprintMetadata struct {
 	Services ServiceMetadata `json:"services"`
 }
 
+// LisstoConfig contains x-lissto extension configuration
+type LisstoConfig struct {
+	Registry         string `json:"registry,omitempty"`
+	Repository       string `json:"repository,omitempty"`       // Single repository for all services
+	RepositoryPrefix string `json:"repositoryPrefix,omitempty"` // Prefix + service name
+}
+
 // ParseBlueprintMetadata parses docker-compose content and extracts:
-// - Title from x-lissto.title extension
+// - Title with priority: x-lissto.title → repo.Name → repo.URL
 // - Service categorization based on build phase and lissto.dev/group label
-func ParseBlueprintMetadata(composeContent string, repositoryFallback string) (*BlueprintMetadata, error) {
+func ParseBlueprintMetadata(composeContent string, repoConfig config.RepoConfig) (*BlueprintMetadata, error) {
 	// Parse docker-compose
 	project, err := loader.LoadWithContext(
 		context.Background(),
@@ -44,8 +52,8 @@ func ParseBlueprintMetadata(composeContent string, repositoryFallback string) (*
 		return nil, fmt.Errorf("failed to parse Docker Compose: %w", err)
 	}
 
-	// Extract title from x-lissto.title
-	title := extractTitle(project, repositoryFallback)
+	// Extract title with priority: x-lissto.title → repo.Name → repo.URL
+	title := extractTitle(project, repoConfig)
 
 	// Categorize services
 	services, infra := categorizeServices(project.Services)
@@ -59,9 +67,12 @@ func ParseBlueprintMetadata(composeContent string, repositoryFallback string) (*
 	}, nil
 }
 
-// extractTitle extracts title from x-lissto.title extension field, or falls back to repository
-func extractTitle(project *types.Project, repositoryFallback string) string {
-	// Check for x-lissto extension
+// extractTitle extracts title with priority:
+// 1. x-lissto.title (explicit in docker-compose)
+// 2. repo.Name (configured name from repos config)
+// 3. repo.URL (normalized repository URL)
+func extractTitle(project *types.Project, repoConfig config.RepoConfig) string {
+	// Priority 1: Check for explicit x-lissto.title
 	if project.Extensions != nil {
 		if lisstoExt, ok := project.Extensions["x-lissto"]; ok {
 			if extMap, ok := lisstoExt.(map[string]interface{}); ok {
@@ -74,8 +85,55 @@ func extractTitle(project *types.Project, repositoryFallback string) string {
 		}
 	}
 
-	// Fallback to repository name
-	return repositoryFallback
+	// Priority 2: Use configured repository name if available
+	if repoConfig.Name != "" {
+		return repoConfig.Name
+	}
+
+	// Priority 3: Fall back to normalized repository URL
+	return config.NormalizeRepositoryURL(repoConfig.URL)
+}
+
+// ExtractLisstoConfig extracts x-lissto extension configuration from a project
+func ExtractLisstoConfig(project *types.Project) *LisstoConfig {
+	config := &LisstoConfig{}
+
+	if project.Extensions == nil {
+		return config
+	}
+
+	lisstoExt, ok := project.Extensions["x-lissto"]
+	if !ok {
+		return config
+	}
+
+	extMap, ok := lisstoExt.(map[string]interface{})
+	if !ok {
+		return config
+	}
+
+	// Extract registry
+	if registryVal, ok := extMap["registry"]; ok {
+		if registryStr, ok := registryVal.(string); ok && registryStr != "" {
+			config.Registry = registryStr
+		}
+	}
+
+	// Extract repository (single image for all services)
+	if repoVal, ok := extMap["repository"]; ok {
+		if repoStr, ok := repoVal.(string); ok && repoStr != "" {
+			config.Repository = repoStr
+		}
+	}
+
+	// Extract repositoryPrefix (prefix + service name)
+	if prefixVal, ok := extMap["repositoryPrefix"]; ok {
+		if prefixStr, ok := prefixVal.(string); ok && prefixStr != "" {
+			config.RepositoryPrefix = prefixStr
+		}
+	}
+
+	return config
 }
 
 // categorizeServices categorizes services into "services" (with build) and "infra" (without build)

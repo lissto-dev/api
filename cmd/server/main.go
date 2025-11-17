@@ -11,11 +11,13 @@ import (
 	"github.com/labstack/echo/v4/middleware"
 	"go.uber.org/zap"
 
+	internalMiddleware "github.com/lissto-dev/api/internal/middleware"
 	"github.com/lissto-dev/api/internal/server"
 	"github.com/lissto-dev/api/pkg/authz"
 	"github.com/lissto-dev/api/pkg/config"
 	"github.com/lissto-dev/api/pkg/k8s"
 	"github.com/lissto-dev/api/pkg/logging"
+	pkgServer "github.com/lissto-dev/api/pkg/server"
 	operatorConfig "github.com/lissto-dev/controller/pkg/config"
 )
 
@@ -116,6 +118,28 @@ func main() {
 		zap.Int("count", len(apiKeys)),
 		zap.String("namespace", apiNamespace))
 
+	// Get or create API instance ID (stored in the same secret as API keys)
+	instanceID, err := pkgServer.GetOrCreateInstanceID(ctx, k8sClient, apiNamespace, config.SecretName)
+	if err != nil {
+		logging.Logger.Fatal("Failed to get or create instance ID", zap.Error(err))
+	}
+	logging.Logger.Info("API instance ID initialized", zap.String("id", instanceID))
+
+	// Load public URL from config or environment variable
+	// Priority: config file > environment variable
+	publicURL := cfg.API.Server.PublicURL
+	if publicURL == "" {
+		publicURL = os.Getenv("LISSTO_PUBLIC_URL")
+		if publicURL != "" {
+			logging.Logger.Info("Loaded public URL from environment", zap.String("url", publicURL))
+		}
+	} else {
+		logging.Logger.Info("Loaded public URL from config", zap.String("url", publicURL))
+	}
+	if publicURL == "" {
+		logging.Logger.Info("No public URL configured")
+	}
+
 	// Create Echo instance
 	e := echo.New()
 	e.HideBanner = true
@@ -123,13 +147,14 @@ func main() {
 	// Add validator
 	e.Validator = &CustomValidator{validator: validator.New()}
 
-	// Add middleware
+	// Add global middleware (including API ID header)
 	e.Use(middleware.Logger())
 	e.Use(middleware.Recover())
 	e.Use(middleware.CORS())
+	e.Use(internalMiddleware.APIIDMiddleware(instanceID))
 
 	// Initialize and start server
-	srv := server.New(e, apiKeys, cfg, k8sClient, authorizer, nsManager, apiNamespace)
+	srv := server.New(e, apiKeys, cfg, k8sClient, authorizer, nsManager, apiNamespace, instanceID, publicURL)
 	logging.Logger.Info("Server initialized")
 
 	if err := srv.Start(); err != nil {

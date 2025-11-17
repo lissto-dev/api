@@ -68,7 +68,7 @@ func (h *Handler) CreateEnv(c echo.Context) error {
 	perm := h.authorizer.CanAccess(user.Role, authz.ActionCreate, authz.ResourceEnv, namespace, user.Name)
 	if !perm.Allowed {
 		logging.LogDeniedWithIP(perm.Reason, user.Name, "POST /envs", c.RealIP())
-		return c.NoContent(403)
+		return c.String(403, fmt.Sprintf("Permission denied: %s", perm.Reason))
 	}
 
 	// Check if env already exists
@@ -130,7 +130,7 @@ func (h *Handler) GetEnvs(c echo.Context) error {
 	perm := h.authorizer.CanAccess(user.Role, authz.ActionList, authz.ResourceEnv, namespace, user.Name)
 	if !perm.Allowed {
 		logging.LogDeniedWithIP(perm.Reason, user.Name, "GET /envs", c.RealIP())
-		return c.NoContent(403)
+		return c.String(403, fmt.Sprintf("Permission denied: %s", perm.Reason))
 	}
 
 	// List envs from user's namespace
@@ -174,7 +174,7 @@ func (h *Handler) GetEnv(c echo.Context) error {
 	perm := h.authorizer.CanAccess(user.Role, authz.ActionRead, authz.ResourceEnv, namespace, user.Name)
 	if !perm.Allowed {
 		logging.LogDeniedWithIP(perm.Reason, user.Name, fmt.Sprintf("GET /envs/%s", envName), c.RealIP())
-		return c.NoContent(403)
+		return c.String(403, fmt.Sprintf("Permission denied: %s", perm.Reason))
 	}
 
 	// Get env
@@ -184,7 +184,7 @@ func (h *Handler) GetEnv(c echo.Context) error {
 			zap.String("name", envName),
 			zap.String("namespace", namespace),
 			zap.Error(err))
-		return c.NoContent(404)
+		return c.String(404, fmt.Sprintf("Environment '%s' not found", envName))
 	}
 
 	// Convert to response format
