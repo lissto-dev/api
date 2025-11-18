@@ -3,7 +3,6 @@ package kompose
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/kubernetes/kompose/pkg/kobject"
@@ -97,17 +96,28 @@ func (c *Converter) Convert(composeYAML string) (string, error) {
 }
 
 // writeTempComposeFile writes compose YAML to a temporary file
+// Uses os.CreateTemp which respects TMPDIR environment variable
 func (c *Converter) writeTempComposeFile(composeYAML string) (string, error) {
-	tmpDir := os.TempDir()
-	tmpFile := filepath.Join(tmpDir, fmt.Sprintf("compose-%s.yaml",
-		strings.ReplaceAll(c.namespace, "/", "-")))
-
-	err := os.WriteFile(tmpFile, []byte(composeYAML), 0644)
+	// Create temp file with pattern that includes namespace for debugging
+	// os.CreateTemp uses os.TempDir() which respects TMPDIR env var
+	pattern := fmt.Sprintf("compose-%s-*.yaml", strings.ReplaceAll(c.namespace, "/", "-"))
+	tmpFile, err := os.CreateTemp("", pattern)
 	if err != nil {
+		return "", fmt.Errorf("failed to create temp file: %w", err)
+	}
+	defer tmpFile.Close()
+
+	// Write compose content
+	if _, err := tmpFile.Write([]byte(composeYAML)); err != nil {
+		os.Remove(tmpFile.Name())
 		return "", fmt.Errorf("failed to write temp file: %w", err)
 	}
 
-	return tmpFile, nil
+	logging.Logger.Debug("Created temporary compose file",
+		zap.String("path", tmpFile.Name()),
+		zap.String("namespace", c.namespace))
+
+	return tmpFile.Name(), nil
 }
 
 // SerializeToYAML converts runtime.Objects to YAML string
