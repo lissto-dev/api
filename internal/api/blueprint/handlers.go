@@ -269,13 +269,11 @@ type BlueprintResponse struct {
 func extractBlueprintResponse(bp *envv1alpha1.Blueprint) BlueprintResponse {
 	identifier := common.GenerateScopedIdentifier(bp.Namespace, bp.Name)
 
-	// Extract title from annotations
-	title := ""
+	// Extract title
+	title := common.ExtractBlueprintTitle(bp, "")
 	var services compose.ServiceMetadata
 
 	if bp.Annotations != nil {
-		title = bp.Annotations["lissto.dev/title"]
-
 		if servicesJSON, ok := bp.Annotations["lissto.dev/services"]; ok && servicesJSON != "" {
 			if parsedServices, err := compose.ServiceMetadataFromJSON(servicesJSON); err == nil {
 				services = *parsedServices

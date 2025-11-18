@@ -3,6 +3,8 @@ package common
 import (
 	"fmt"
 	"strings"
+
+	envv1alpha1 "github.com/lissto-dev/controller/api/v1alpha1"
 )
 
 // GenerateScopedIdentifier creates scope/name format
@@ -106,4 +108,15 @@ type EnvResponse struct {
 type UserInfoResponse struct {
 	Name string `json:"name"` // Lissto username (from API key)
 	Role string `json:"role"` // User role
+}
+
+// ExtractBlueprintTitle extracts the title from blueprint annotations
+// Falls back to the provided fallback value if annotation is not present or empty
+func ExtractBlueprintTitle(bp *envv1alpha1.Blueprint, fallback string) string {
+	if bp.Annotations != nil {
+		if title, ok := bp.Annotations["lissto.dev/title"]; ok && title != "" {
+			return title
+		}
+	}
+	return fallback
 }

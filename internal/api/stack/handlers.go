@@ -256,13 +256,8 @@ func (h *Handler) CreateStack(c echo.Context) error {
 	}
 
 	// Step 2: Create Stack CRD
-	// Extract blueprint title from annotations
-	blueprintTitle := blueprint.Name
-	if blueprint.Annotations != nil {
-		if title, ok := blueprint.Annotations["lissto.dev/title"]; ok && title != "" {
-			blueprintTitle = title
-		}
-	}
+	// Extract blueprint title
+	blueprintTitle := common.ExtractBlueprintTitle(blueprint, blueprint.Name)
 
 	stack := &envv1alpha1.Stack{
 		ObjectMeta: metav1.ObjectMeta{
