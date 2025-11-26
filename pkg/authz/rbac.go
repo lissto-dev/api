@@ -22,6 +22,8 @@ const (
 	ResourceBlueprint ResourceType = "blueprint"
 	ResourceStack     ResourceType = "stack"
 	ResourceEnv       ResourceType = "env"
+	ResourceVariable  ResourceType = "variable"
+	ResourceSecret    ResourceType = "secret"
 )
 
 // Permission represents a permission check result
@@ -46,8 +48,19 @@ func NewAuthorizer(nsManager *NamespaceManager) *Authorizer {
 func (a *Authorizer) CanAccess(role Role, action Action, resourceType ResourceType, namespace, username string) Permission {
 	// Admin can only list, read (get), and delete across any namespace
 	// Admin cannot create or update blueprints, stacks, or envs. it's a role for managing the platform, not for managing resources.
+	// Exception: Admin can create/update Variables and Secrets in global namespace (for global configs)
 	if role == Admin {
-		// Block create and update actions
+		// Allow create/update for Variables and Secrets in global namespace
+		if (resourceType == ResourceVariable || resourceType == ResourceSecret) &&
+			(action == ActionCreate || action == ActionUpdate) &&
+			a.nsManager.IsGlobalNamespace(namespace) {
+			return Permission{
+				Allowed: true,
+				Reason:  "admin can create/update global variables and secrets",
+			}
+		}
+
+		// Block create and update actions for other resources
 		if action == ActionCreate || action == ActionUpdate {
 			return Permission{
 				Allowed: false,

@@ -1,8 +1,13 @@
-# Lissto API
+# What is Lissto
+  
+Lissto is a DevEnv and DevEx(perience) platform that simplifies the development of applications on Kubernetes.
+It bridges the gap between Docker Compose loved by developers and Kubernetes loved by DevOps and platform engineers.  
+  
+## Lissto API
 
-A clean, scalable Go API built with Echo and go-pkgz/auth, designed for Kubernetes resource management with role-based access control.
+The API part of the Lissto Platform.
 
-## Architecture
+### Architecture
 
 This API follows clean architecture principles with clear separation of concerns:
 
@@ -23,7 +28,7 @@ api/
 └── api-keys.yaml               # API key configuration
 ```
 
-## Features
+### Features
 
 - **Clean Architecture**: Separated concerns with resource-based organization
 - **API Key Authentication**: File-based API key management with role assignment

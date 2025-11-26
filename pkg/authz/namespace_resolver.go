@@ -91,3 +91,31 @@ func (a *Authorizer) DetermineNamespace(
 	// For other roles, use authenticated username
 	return a.nsManager.GetDeveloperNamespace(username), nil
 }
+
+// ResolveNamespaceForScope determines the target namespace based on scope (for variables/secrets)
+// Scope can be: "env" (user namespace), "repo" (user or global), "global" (global only, admin required)
+func (a *Authorizer) ResolveNamespaceForScope(
+	role Role,
+	username string,
+	scope string,
+) (string, error) {
+	switch scope {
+	case "global":
+		// Global scope requires admin
+		if role != Admin {
+			return "", fmt.Errorf("admin required for global scope")
+		}
+		return a.nsManager.GetGlobalNamespace(), nil
+	case "repo":
+		// Repo scope: admin can use global namespace, others use their own
+		if role == Admin {
+			return a.nsManager.GetGlobalNamespace(), nil
+		}
+		return a.nsManager.GetDeveloperNamespace(username), nil
+	case "env":
+		// Env scope always goes to user's namespace
+		return a.nsManager.GetDeveloperNamespace(username), nil
+	default:
+		return "", fmt.Errorf("invalid scope: %s (must be env, repo, or global)", scope)
+	}
+}

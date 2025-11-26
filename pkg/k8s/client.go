@@ -243,3 +243,123 @@ func (c *Client) CreateSecret(ctx context.Context, secret *corev1.Secret) error 
 func (c *Client) UpdateSecret(ctx context.Context, secret *corev1.Secret) error {
 	return c.Update(ctx, secret)
 }
+
+// DeleteSecret deletes a Secret resource
+func (c *Client) DeleteSecret(ctx context.Context, namespace, name string) error {
+	secret := &corev1.Secret{}
+	secret.Namespace = namespace
+	secret.Name = name
+	return c.Delete(ctx, secret)
+}
+
+// CreateLisstoVariable creates a LisstoVariable resource
+func (c *Client) CreateLisstoVariable(ctx context.Context, variable *envv1alpha1.LisstoVariable) error {
+	return c.Create(ctx, variable)
+}
+
+// GetLisstoVariable retrieves a LisstoVariable resource
+func (c *Client) GetLisstoVariable(ctx context.Context, namespace, name string) (*envv1alpha1.LisstoVariable, error) {
+	variable := &envv1alpha1.LisstoVariable{}
+	if err := c.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, variable); err != nil {
+		return nil, err
+	}
+	return variable, nil
+}
+
+// ListLisstoVariables lists LisstoVariable resources in a namespace
+func (c *Client) ListLisstoVariables(ctx context.Context, namespace string) (*envv1alpha1.LisstoVariableList, error) {
+	variableList := &envv1alpha1.LisstoVariableList{}
+	opts := []client.ListOption{}
+	if namespace != "" {
+		opts = append(opts, client.InNamespace(namespace))
+	}
+	if err := c.List(ctx, variableList, opts...); err != nil {
+		return nil, err
+	}
+	return variableList, nil
+}
+
+// ListLisstoVariablesWithLabels lists LisstoVariable resources with specific labels
+func (c *Client) ListLisstoVariablesWithLabels(ctx context.Context, namespace string, labels map[string]string) (*envv1alpha1.LisstoVariableList, error) {
+	variableList := &envv1alpha1.LisstoVariableList{}
+	opts := []client.ListOption{}
+	if namespace != "" {
+		opts = append(opts, client.InNamespace(namespace))
+	}
+	if len(labels) > 0 {
+		opts = append(opts, client.MatchingLabels(labels))
+	}
+	if err := c.List(ctx, variableList, opts...); err != nil {
+		return nil, err
+	}
+	return variableList, nil
+}
+
+// UpdateLisstoVariable updates a LisstoVariable resource
+func (c *Client) UpdateLisstoVariable(ctx context.Context, variable *envv1alpha1.LisstoVariable) error {
+	return c.Update(ctx, variable)
+}
+
+// DeleteLisstoVariable deletes a LisstoVariable resource
+func (c *Client) DeleteLisstoVariable(ctx context.Context, namespace, name string) error {
+	variable := &envv1alpha1.LisstoVariable{}
+	variable.Namespace = namespace
+	variable.Name = name
+	return c.Delete(ctx, variable)
+}
+
+// CreateLisstoSecret creates a LisstoSecret resource
+func (c *Client) CreateLisstoSecret(ctx context.Context, secret *envv1alpha1.LisstoSecret) error {
+	return c.Create(ctx, secret)
+}
+
+// GetLisstoSecret retrieves a LisstoSecret resource
+func (c *Client) GetLisstoSecret(ctx context.Context, namespace, name string) (*envv1alpha1.LisstoSecret, error) {
+	secret := &envv1alpha1.LisstoSecret{}
+	if err := c.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, secret); err != nil {
+		return nil, err
+	}
+	return secret, nil
+}
+
+// ListLisstoSecrets lists LisstoSecret resources in a namespace
+func (c *Client) ListLisstoSecrets(ctx context.Context, namespace string) (*envv1alpha1.LisstoSecretList, error) {
+	secretList := &envv1alpha1.LisstoSecretList{}
+	opts := []client.ListOption{}
+	if namespace != "" {
+		opts = append(opts, client.InNamespace(namespace))
+	}
+	if err := c.List(ctx, secretList, opts...); err != nil {
+		return nil, err
+	}
+	return secretList, nil
+}
+
+// ListLisstoSecretsWithLabels lists LisstoSecret resources with specific labels
+func (c *Client) ListLisstoSecretsWithLabels(ctx context.Context, namespace string, labels map[string]string) (*envv1alpha1.LisstoSecretList, error) {
+	secretList := &envv1alpha1.LisstoSecretList{}
+	opts := []client.ListOption{}
+	if namespace != "" {
+		opts = append(opts, client.InNamespace(namespace))
+	}
+	if len(labels) > 0 {
+		opts = append(opts, client.MatchingLabels(labels))
+	}
+	if err := c.List(ctx, secretList, opts...); err != nil {
+		return nil, err
+	}
+	return secretList, nil
+}
+
+// UpdateLisstoSecret updates a LisstoSecret resource
+func (c *Client) UpdateLisstoSecret(ctx context.Context, secret *envv1alpha1.LisstoSecret) error {
+	return c.Update(ctx, secret)
+}
+
+// DeleteLisstoSecret deletes a LisstoSecret resource
+func (c *Client) DeleteLisstoSecret(ctx context.Context, namespace, name string) error {
+	secret := &envv1alpha1.LisstoSecret{}
+	secret.Namespace = namespace
+	secret.Name = name
+	return c.Delete(ctx, secret)
+}

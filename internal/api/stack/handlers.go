@@ -193,8 +193,17 @@ func (h *Handler) CreateStack(c echo.Context) error {
 			return c.String(400, fmt.Sprintf("Image for service %s must contain digest (@sha256:...), got: %s", serviceName, imageInfo.Digest))
 		}
 
-		// Apply provided image to service
+		// Extract container_name from service if specified
 		service := composeConfig.Services[serviceName]
+		if service.ContainerName != "" {
+			imageInfo.ContainerName = service.ContainerName
+			enrichedImages[serviceName] = imageInfo
+			logging.Logger.Info("Extracted custom container name",
+				zap.String("service", serviceName),
+				zap.String("containerName", service.ContainerName))
+		}
+
+		// Apply provided image to service
 		service.Image = imageInfo.Digest
 		composeConfig.Services[serviceName] = service
 
@@ -559,9 +568,10 @@ func (h *Handler) updateStackImages(c echo.Context, stack *envv1alpha1.Stack, im
 		}
 
 		updatedImages[service] = envv1alpha1.ImageInfo{
-			Digest: newDigest,
-			Image:  newImage,         // Use new tag if provided
-			URL:    existingInfo.URL, // Preserve URL
+			Digest:        newDigest,
+			Image:         newImage,                   // Use new tag if provided
+			URL:           existingInfo.URL,           // Preserve URL
+			ContainerName: existingInfo.ContainerName, // Preserve container name
 		}
 	}
 
