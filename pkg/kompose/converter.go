@@ -47,7 +47,6 @@ func (c *Converter) ConvertToObjects(composeYAML string) ([]runtime.Object, erro
 	// 3. Set conversion options (namespace goes here!)
 	opt := kobject.ConvertOptions{
 		Provider:              "kubernetes",
-		Controller:            "deployment",
 		CreateChart:           false,
 		CreateD:               true, // Create Deployments
 		Replicas:              1,
