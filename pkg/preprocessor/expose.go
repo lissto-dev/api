@@ -9,61 +9,144 @@ import (
 	"go.uber.org/zap"
 )
 
+// VisibilityType represents the ingress visibility level
+type VisibilityType string
+
+const (
+	VisibilityInternal VisibilityType = "internal"
+	VisibilityInternet VisibilityType = "internet"
+)
+
+// IngressConfig holds configuration for a specific ingress visibility type
+type IngressConfig struct {
+	IngressClass string
+	HostSuffix   string
+	TLSSecret    string
+}
+
 // ExposePreprocessor handles conversion of lissto.dev/expose labels to Kompose labels
 type ExposePreprocessor struct {
-	hostSuffix   string
-	ingressClass string
+	internalConfig *IngressConfig // nil if not configured
+	internetConfig *IngressConfig // nil if not configured
+	defaultType    VisibilityType // which type to use for "true" value
 }
 
 // NewExposePreprocessor creates a new expose preprocessor
-func NewExposePreprocessor(hostSuffix, ingressClass string) *ExposePreprocessor {
+// Either internalConfig or internetConfig can be nil, but not both
+func NewExposePreprocessor(internalConfig, internetConfig *IngressConfig) *ExposePreprocessor {
+	// Determine default type based on what's configured
+	defaultType := VisibilityInternal
+	if internalConfig == nil && internetConfig != nil {
+		defaultType = VisibilityInternet
+	}
+
 	return &ExposePreprocessor{
-		hostSuffix:   hostSuffix,
-		ingressClass: ingressClass,
+		internalConfig: internalConfig,
+		internetConfig: internetConfig,
+		defaultType:    defaultType,
 	}
 }
 
+// ExposureError represents an error during service exposure processing
+type ExposureError struct {
+	ServiceName   string
+	RequestedType VisibilityType
+	Message       string
+}
+
+func (e *ExposureError) Error() string {
+	return fmt.Sprintf("service '%s': %s", e.ServiceName, e.Message)
+}
+
+func NewMissingConfigError(serviceName string, visType VisibilityType) *ExposureError {
+	available := "internet"
+	if visType == VisibilityInternet {
+		available = "internal"
+	}
+	return &ExposureError{
+		ServiceName:   serviceName,
+		RequestedType: visType,
+		Message: fmt.Sprintf("requested '%s' visibility but only '%s' is configured",
+			visType, available),
+	}
+}
+
+// getVisibilityType extracts the visibility type from labels
+func (ep *ExposePreprocessor) getVisibilityType(service types.ServiceConfig) VisibilityType {
+	if service.Labels == nil {
+		return ep.defaultType
+	}
+
+	exposeValue, exists := service.Labels["lissto.dev/expose"]
+	if !exists {
+		return ep.defaultType
+	}
+
+	switch exposeValue {
+	case "internet":
+		return VisibilityInternet
+	case "internal":
+		return VisibilityInternal
+	case "true", "":
+		return ep.defaultType
+	default:
+		return ep.defaultType
+	}
+}
+
+// getConfigForVisibility returns the appropriate config based on visibility type
+func (ep *ExposePreprocessor) getConfigForVisibility(visType VisibilityType) *IngressConfig {
+	if visType == VisibilityInternet {
+		return ep.internetConfig
+	}
+	return ep.internalConfig
+}
+
+// isVisibilityConfigured checks if a visibility type has configuration
+func (ep *ExposePreprocessor) isVisibilityConfigured(visType VisibilityType) bool {
+	return ep.getConfigForVisibility(visType) != nil
+}
+
 // ProcessServices converts lissto.dev/expose labels to Kompose labels for ingress generation
-// Also injects lissto.dev/stack label to all resources via deploy.labels
-func (ep *ExposePreprocessor) ProcessServices(services types.Services, envName, stackName string) types.Services {
+// Returns an error if a service requests a visibility type that is not configured
+func (ep *ExposePreprocessor) ProcessServices(services types.Services, envName, stackName string) (types.Services, error) {
 	processed := make(types.Services)
 
 	for name, service := range services {
-		// Always start by stripping any pre-existing Kompose expose labels
 		baseLabels := ep.removeKomposeExposeLabels(service.Labels)
-
-		// Create new service
 		newService := service
-
-		// Inject stack label via deploy.labels (becomes K8s labels, not annotations)
 		newService = ep.injectStackLabelToDeploy(newService, stackName)
 
-		// Check if service has expose labels
 		if ep.shouldExposeService(service) {
-			// Generate hostname
-			hostname := ep.generateHostname(name, envName)
+			// Determine visibility type
+			visType := ep.getVisibilityType(service)
 
-			// Convert expose labels to Kompose labels
-			komposeLabels := ep.convertToKomposeLabels(baseLabels, hostname)
+			// Validate that this visibility type is configured
+			if !ep.isVisibilityConfigured(visType) {
+				return nil, NewMissingConfigError(name, visType)
+			}
 
-			// Update labels
+			config := ep.getConfigForVisibility(visType)
+			hostname := ep.generateHostnameWithConfig(name, envName, *config)
+			komposeLabels := ep.convertToKomposeLabels(baseLabels, hostname, *config)
 			newService.Labels = komposeLabels
 
 			logging.Logger.Info("Service marked for exposure",
 				zap.String("service", name),
 				zap.String("hostname", hostname),
-				zap.String("ingress-class", ep.ingressClass),
+				zap.String("visibility", string(visType)),
+				zap.String("ingress-class", config.IngressClass),
+				zap.String("tls-secret", config.TLSSecret),
 				zap.String("stack", stackName))
 
 			processed[name] = newService
 		} else {
-			// Keep service without any kompose labels if no expose labels
 			newService.Labels = baseLabels
 			processed[name] = newService
 		}
 	}
 
-	return processed
+	return processed, nil
 }
 
 // shouldExposeService determines if a service should be exposed based on labels
@@ -72,31 +155,36 @@ func (ep *ExposePreprocessor) shouldExposeService(service types.ServiceConfig) b
 		return false
 	}
 
-	// Check for lissto.dev/expose label
 	exposeValue, exists := service.Labels["lissto.dev/expose"]
-	return exists && (exposeValue == "true" || exposeValue != "")
+	if !exists {
+		return false
+	}
+
+	// Accept: "true", "internal", "internet", or any non-empty value
+	return exposeValue == "true" || exposeValue == "internal" || exposeValue == "internet" || exposeValue != ""
 }
 
-// generateHostname creates a hostname for the exposed service using env name
-func (ep *ExposePreprocessor) generateHostname(serviceName, envName string) string {
-	// Format: {serviceName}-{envName}{hostSuffix}
-	return fmt.Sprintf("%s-%s%s", serviceName, envName, ep.hostSuffix)
+// generateHostnameWithConfig creates a hostname using the provided config
+func (ep *ExposePreprocessor) generateHostnameWithConfig(serviceName, envName string, config IngressConfig) string {
+	return fmt.Sprintf("%s-%s%s", serviceName, envName, config.HostSuffix)
 }
 
-// GetExposedServiceURL returns the expected URL for an exposed service, or empty string if not exposed
-// Requires envName to be provided to generate the URL
+// GetExposedServiceURL returns the expected URL for an exposed service
+// Returns empty string if service is not exposed or visibility type is not configured
 func (ep *ExposePreprocessor) GetExposedServiceURL(service types.ServiceConfig, serviceName, envName string) string {
-	if !ep.shouldExposeService(service) {
+	if !ep.shouldExposeService(service) || envName == "" {
 		return ""
 	}
-	if envName == "" {
-		return "" // Cannot generate URL without env name
+	visType := ep.getVisibilityType(service)
+	config := ep.getConfigForVisibility(visType)
+	if config == nil {
+		return ""
 	}
-	return ep.generateHostname(serviceName, envName)
+	return ep.generateHostnameWithConfig(serviceName, envName, *config)
 }
 
 // convertToKomposeLabels converts lissto.dev/expose labels to Kompose-compatible labels
-func (ep *ExposePreprocessor) convertToKomposeLabels(labels map[string]string, hostname string) map[string]string {
+func (ep *ExposePreprocessor) convertToKomposeLabels(labels map[string]string, hostname string, config IngressConfig) map[string]string {
 	komposeLabels := make(map[string]string)
 
 	// Copy non-expose labels
@@ -113,27 +201,24 @@ func (ep *ExposePreprocessor) convertToKomposeLabels(labels map[string]string, h
 	komposeLabels["kompose.service.expose"] = hostname
 
 	// Set ingress class
-	komposeLabels["kompose.service.expose.ingress-class-name"] = ep.ingressClass
+	komposeLabels["kompose.service.expose.ingress-class-name"] = config.IngressClass
 
-	// // Set TLS configuration
-	// if tlsValue := ep.getLabelValue(labels, "lissto.dev/expose.tls", "true"); tlsValue == "false" {
-	// 	komposeLabels["kompose.service.expose.tls"] = "false"
-	// }
+	// Set TLS secret (always present due to validation)
+	komposeLabels["kompose.service.expose.tls-secret"] = config.TLSSecret
 
 	return komposeLabels
 }
 
 // removeKomposeExposeLabels returns a copy of labels without kompose service expose labels
-// Only removes: kompose.service.expose and kompose.service.expose.ingress-class-name
 func (ep *ExposePreprocessor) removeKomposeExposeLabels(labels map[string]string) map[string]string {
 	cleaned := make(map[string]string)
 	if labels == nil {
 		return cleaned
 	}
 	for key, value := range labels {
-		// Only remove the two specific ingress-related labels
-		if key == "kompose.service.expose" || key == "kompose.service.expose.ingress-class-name" {
-			// Skip these labels
+		if key == "kompose.service.expose" ||
+			key == "kompose.service.expose.ingress-class-name" ||
+			key == "kompose.service.expose.tls-secret" {
 			continue
 		}
 		cleaned[key] = value

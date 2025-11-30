@@ -45,11 +45,28 @@ func NewHandler(
 	config *operatorConfig.Config,
 	cache cache.Cache,
 ) *Handler {
-	// Create expose preprocessor with host suffix and ingress class
-	exposePreprocessor := preprocessor.NewExposePreprocessor(
-		config.Stacks.Public.HostSuffix,
-		config.Stacks.Public.IngressClass,
-	)
+	// Create internal config if available
+	var internalConfig *preprocessor.IngressConfig
+	if config.Stacks.Ingress.Internal != nil {
+		internalConfig = &preprocessor.IngressConfig{
+			IngressClass: config.Stacks.Ingress.Internal.IngressClass,
+			HostSuffix:   config.Stacks.Ingress.Internal.HostSuffix,
+			TLSSecret:    config.Stacks.Ingress.Internal.TLSSecret,
+		}
+	}
+
+	// Create internet config if available
+	var internetConfig *preprocessor.IngressConfig
+	if config.Stacks.Ingress.Internet != nil {
+		internetConfig = &preprocessor.IngressConfig{
+			IngressClass: config.Stacks.Ingress.Internet.IngressClass,
+			HostSuffix:   config.Stacks.Ingress.Internet.HostSuffix,
+			TLSSecret:    config.Stacks.Ingress.Internet.TLSSecret,
+		}
+	}
+
+	// Create expose preprocessor with internal and internet configs
+	exposePreprocessor := preprocessor.NewExposePreprocessor(internalConfig, internetConfig)
 
 	return &Handler{
 		k8sClient:          k8sClient,
@@ -218,7 +235,14 @@ func (h *Handler) CreateStack(c echo.Context) error {
 	stackName := common.GenerateStackName("", "")
 
 	// Step 4: Expose services preprocessing (using env name for URL generation and stack name for labels)
-	composeConfig.Services = h.exposePreprocessor.ProcessServices(composeConfig.Services, envName, stackName)
+	processedServices, err := h.exposePreprocessor.ProcessServices(composeConfig.Services, envName, stackName)
+	if err != nil {
+		logging.Logger.Error("Failed to process service exposure configuration",
+			zap.String("blueprint", req.Blueprint),
+			zap.Error(err))
+		return c.String(400, fmt.Sprintf("Service exposure configuration error: %s", err.Error()))
+	}
+	composeConfig.Services = processedServices
 
 	// Step 5: Generate Kubernetes manifests using Kompose (isolated)
 	k8sManifests, err := h.generateKubernetesManifests(composeConfig, namespace, stackName)

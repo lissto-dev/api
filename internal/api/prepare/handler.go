@@ -52,15 +52,15 @@ func NewHandler(
 
 	// Create image resolver with global config and cache support
 	imageResolver := image.NewImageResolverWithCache(
-		config.Stacks.Global.Images.Registry,
-		config.Stacks.Global.Images.RepositoryPrefix,
+		config.Stacks.Images.Registry,
+		config.Stacks.Images.RepositoryPrefix,
 		imageChecker,
 		cache,
 	)
 
 	logging.Logger.Info("Image resolver created with global config and cache",
-		zap.String("global_registry", config.Stacks.Global.Images.Registry),
-		zap.String("global_repository_prefix", config.Stacks.Global.Images.RepositoryPrefix),
+		zap.String("global_registry", config.Stacks.Images.Registry),
+		zap.String("global_repository_prefix", config.Stacks.Images.RepositoryPrefix),
 		zap.Bool("cache_enabled", cache != nil))
 
 	return &Handler{
@@ -143,10 +143,23 @@ func (h *Handler) PrepareStack(c echo.Context) error {
 		zap.String("repositoryPrefix", lisstoConfig.RepositoryPrefix))
 
 	// Create expose preprocessor for checking exposed services and calculating URLs
-	exposePreprocessor := preprocessor.NewExposePreprocessor(
-		h.config.Stacks.Public.HostSuffix,
-		h.config.Stacks.Public.IngressClass,
-	)
+	var internalConfig *preprocessor.IngressConfig
+	if h.config.Stacks.Ingress.Internal != nil {
+		internalConfig = &preprocessor.IngressConfig{
+			IngressClass: h.config.Stacks.Ingress.Internal.IngressClass,
+			HostSuffix:   h.config.Stacks.Ingress.Internal.HostSuffix,
+			TLSSecret:    h.config.Stacks.Ingress.Internal.TLSSecret,
+		}
+	}
+	var internetConfig *preprocessor.IngressConfig
+	if h.config.Stacks.Ingress.Internet != nil {
+		internetConfig = &preprocessor.IngressConfig{
+			IngressClass: h.config.Stacks.Ingress.Internet.IngressClass,
+			HostSuffix:   h.config.Stacks.Ingress.Internet.HostSuffix,
+			TLSSecret:    h.config.Stacks.Ingress.Internet.TLSSecret,
+		}
+	}
+	exposePreprocessor := preprocessor.NewExposePreprocessor(internalConfig, internetConfig)
 
 	// Resolve images for each service
 	var results []common.DetailedImageResolutionInfo
