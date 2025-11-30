@@ -28,6 +28,10 @@ func (s *StackLabelInjector) InjectLabels(objects []runtime.Object, stackName st
 		case *appsv1.StatefulSet:
 			s.injectToPodTemplate(&resource.Spec.Template, stackName)
 			objects[i] = resource
+
+		case *corev1.Pod:
+			s.injectToPod(resource, stackName)
+			objects[i] = resource
 		}
 	}
 	return objects
@@ -39,4 +43,12 @@ func (s *StackLabelInjector) injectToPodTemplate(template *corev1.PodTemplateSpe
 		template.Labels = make(map[string]string)
 	}
 	template.Labels["lissto.dev/stack"] = stackName
+}
+
+// injectToPod adds label to a pod's metadata (for standalone Pods, e.g., Jobs)
+func (s *StackLabelInjector) injectToPod(pod *corev1.Pod, stackName string) {
+	if pod.Labels == nil {
+		pod.Labels = make(map[string]string)
+	}
+	pod.Labels["lissto.dev/stack"] = stackName
 }
