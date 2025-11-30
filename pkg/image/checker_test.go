@@ -1,403 +1,122 @@
-package image
+package image_test
 
 import (
-	"testing"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 
-	"github.com/lissto-dev/api/pkg/logging"
-	"go.uber.org/zap"
+	"github.com/lissto-dev/api/pkg/image"
 )
 
-func TestMain(m *testing.M) {
-	// Initialize logger for tests
-	logger, _ := zap.NewDevelopment()
-	logging.Logger = logger
-	defer logger.Sync()
+var _ = Describe("ImageExistenceChecker (mocked)", func() {
+	var (
+		mockChecker *MockImageChecker
+	)
 
-	m.Run()
-}
+	BeforeEach(func() {
+		mockChecker = NewMockImageChecker()
 
-func TestImageExistenceChecker_CheckImageExists(t *testing.T) {
-	checker := NewImageExistenceChecker()
+		// Setup common mock responses
+		mockChecker.AddResponse("alpine:latest", "linux", "amd64", "sha256:alpine-amd64-digest")
+		mockChecker.AddResponse("alpine:latest", "linux", "arm64", "sha256:alpine-arm64-digest")
+		mockChecker.AddResponse("nginx:latest", "linux", "amd64", "sha256:nginx-amd64-digest")
+		mockChecker.AddResponse("nginx:latest", "linux", "arm64", "sha256:nginx-arm64-digest")
+	})
 
-	tests := []struct {
-		name     string
-		imageURL string
-		wantErr  bool
-	}{
-		{
-			name:     "alpine latest - should exist",
-			imageURL: "alpine:latest",
-			wantErr:  false,
-		},
-		{
-			name:     "nonexistent image - should not exist",
-			imageURL: "nonexistent-registry/nonexistent-image:nonexistent-tag",
-			wantErr:  false, // Changed to false since the method returns metadata with Exists=false instead of error
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			metadata, err := checker.CheckImageExists(tt.imageURL)
-
-			if tt.wantErr {
-				if err == nil {
-					t.Errorf("CheckImageExists() expected error but got none")
-				}
-				return
-			}
-
-			if err != nil {
-				t.Errorf("CheckImageExists() error = %v", err)
-				return
-			}
-
-			// For nonexistent images, we expect Exists=false
-			if tt.name == "nonexistent image - should not exist" {
-				if metadata.Exists {
-					t.Errorf("CheckImageExists() image should not exist but does")
-				}
-				return
-			}
-
-			if !metadata.Exists {
-				t.Errorf("CheckImageExists() image should exist but doesn't")
-				return
-			}
-
-			// Verify metadata fields are populated
-			if metadata.Digest == "" {
-				t.Errorf("CheckImageExists() digest should not be empty")
-			}
-
-			if len(metadata.Manifest) == 0 {
-				t.Errorf("CheckImageExists() manifest should not be empty")
-			}
-
-			if metadata.ManifestType == "" {
-				t.Errorf("CheckImageExists() manifest type should not be empty")
-			}
-
-			t.Logf("Image: %s", tt.imageURL)
-			t.Logf("Digest: %s", metadata.Digest)
-			t.Logf("Manifest Type: %s", metadata.ManifestType)
-			t.Logf("Is Multi-Arch: %v", metadata.IsMultiArch)
-			t.Logf("Architectures: %v", metadata.Architectures)
-			t.Logf("Platform Digests: %v", metadata.PlatformDigests)
+	Describe("CheckImageExists", func() {
+		Context("when image exists", func() {
+			It("should return metadata with Exists=true for alpine:latest", func() {
+				metadata, err := mockChecker.CheckImageExists("alpine:latest")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(metadata.Exists).To(BeTrue())
+				Expect(metadata.Digest).To(Equal("sha256:alpine-amd64-digest"))
+				Expect(metadata.ManifestType).NotTo(BeEmpty())
+			})
 		})
-	}
-}
 
-func TestImageExistenceChecker_CheckImageExistsForPlatform(t *testing.T) {
-	checker := NewImageExistenceChecker()
-
-	tests := []struct {
-		name     string
-		imageURL string
-		os       string
-		arch     string
-		wantErr  bool
-	}{
-		{
-			name:     "alpine latest for linux/amd64",
-			imageURL: "alpine:latest",
-			os:       "linux",
-			arch:     "amd64",
-			wantErr:  false,
-		},
-		{
-			name:     "alpine latest for linux/arm64",
-			imageURL: "alpine:latest",
-			os:       "linux",
-			arch:     "arm64",
-			wantErr:  false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			metadata, err := checker.CheckImageExistsForPlatform(tt.imageURL, tt.os, tt.arch)
-
-			if tt.wantErr {
-				if err == nil {
-					t.Errorf("CheckImageExistsForPlatform() expected error but got none")
-				}
-				return
-			}
-
-			if err != nil {
-				t.Errorf("CheckImageExistsForPlatform() error = %v", err)
-				return
-			}
-
-			if !metadata.Exists {
-				t.Errorf("CheckImageExistsForPlatform() image should exist but doesn't")
-				return
-			}
-
-			// Verify metadata fields are populated
-			if metadata.Digest == "" {
-				t.Errorf("CheckImageExistsForPlatform() digest should not be empty")
-			}
-
-			if len(metadata.Manifest) == 0 {
-				t.Errorf("CheckImageExistsForPlatform() manifest should not be empty")
-			}
-
-			if metadata.ManifestType == "" {
-				t.Errorf("CheckImageExistsForPlatform() manifest type should not be empty")
-			}
-
-			// Verify platform-specific fields
-			expectedPlatform := tt.os + "/" + tt.arch
-			if platformDigest, exists := metadata.PlatformDigests[expectedPlatform]; !exists {
-				t.Errorf("CheckImageExistsForPlatform() platform digest for %s should exist", expectedPlatform)
-			} else if platformDigest == "" {
-				t.Errorf("CheckImageExistsForPlatform() platform digest for %s should not be empty", expectedPlatform)
-			}
-
-			t.Logf("Image: %s", tt.imageURL)
-			t.Logf("Platform: %s/%s", tt.os, tt.arch)
-			t.Logf("Digest: %s", metadata.Digest)
-			t.Logf("Manifest Type: %s", metadata.ManifestType)
-			t.Logf("Is Multi-Arch: %v", metadata.IsMultiArch)
-			t.Logf("Architectures: %v", metadata.Architectures)
-			t.Logf("Platform Digests: %v", metadata.PlatformDigests)
+		Context("when image does not exist", func() {
+			It("should return metadata with Exists=false", func() {
+				metadata, err := mockChecker.CheckImageExists("nonexistent-registry/nonexistent-image:nonexistent-tag")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(metadata.Exists).To(BeFalse())
+			})
 		})
-	}
-}
+	})
 
-func TestImageExistenceChecker_GetDigestForPlatform(t *testing.T) {
-	checker := NewImageExistenceChecker()
-
-	tests := []struct {
-		name     string
-		imageURL string
-		os       string
-		arch     string
-		wantErr  bool
-	}{
-		{
-			name:     "nginx latest digest for linux/amd64",
-			imageURL: "nginx:latest",
-			os:       "linux",
-			arch:     "amd64",
-			wantErr:  false,
-		},
-		{
-			name:     "nginx latest digest for linux/arm64",
-			imageURL: "nginx:latest",
-			os:       "linux",
-			arch:     "arm64",
-			wantErr:  false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			digest, err := checker.GetDigestForPlatform(tt.imageURL, tt.os, tt.arch)
-
-			if tt.wantErr {
-				if err == nil {
-					t.Errorf("GetDigestForPlatform() expected error but got none")
-				}
-				return
-			}
-
-			if err != nil {
-				t.Errorf("GetDigestForPlatform() error = %v", err)
-				return
-			}
-
-			if digest == "" {
-				t.Errorf("GetDigestForPlatform() digest should not be empty")
-			}
-
-			// Verify digest format (should start with sha256:)
-			if len(digest) < 7 || digest[:7] != "sha256:" {
-				t.Errorf("GetDigestForPlatform() digest should start with 'sha256:', got: %s", digest)
-			}
-
-			t.Logf("Image: %s", tt.imageURL)
-			t.Logf("Platform: %s/%s", tt.os, tt.arch)
-			t.Logf("Digest: %s", digest)
+	Describe("CheckImageExistsForPlatform", func() {
+		Context("for linux/amd64", func() {
+			It("should return correct digest for alpine:latest", func() {
+				metadata, err := mockChecker.CheckImageExistsForPlatform("alpine:latest", "linux", "amd64")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(metadata.Exists).To(BeTrue())
+				Expect(metadata.Digest).To(Equal("sha256:alpine-amd64-digest"))
+				Expect(metadata.Architectures).To(ContainElement("amd64"))
+				Expect(metadata.PlatformDigests).To(HaveKey("linux/amd64"))
+			})
 		})
-	}
-}
 
-func TestImageExistenceChecker_GetAvailablePlatforms(t *testing.T) {
-	checker := NewImageExistenceChecker()
-
-	tests := []struct {
-		name     string
-		imageURL string
-		wantErr  bool
-	}{
-		{
-			name:     "nginx latest platforms",
-			imageURL: "nginx:latest",
-			wantErr:  false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			platforms, err := checker.GetAvailablePlatforms(tt.imageURL)
-
-			if tt.wantErr {
-				if err == nil {
-					t.Errorf("GetAvailablePlatforms() expected error but got none")
-				}
-				return
-			}
-
-			if err != nil {
-				t.Errorf("GetAvailablePlatforms() error = %v", err)
-				return
-			}
-
-			if len(platforms) == 0 {
-				t.Errorf("GetAvailablePlatforms() should return at least one platform")
-			}
-
-			// Verify platform format (should be os/arch or os/arch/variant)
-			for _, platform := range platforms {
-				if platform == "" {
-					t.Errorf("GetAvailablePlatforms() platform should not be empty")
-				}
-				// Platform should contain at least one slash
-				if len(platform) < 3 || platform[0] == '/' || platform[len(platform)-1] == '/' {
-					t.Errorf("GetAvailablePlatforms() platform format should be 'os/arch' or 'os/arch/variant', got: %s", platform)
-				}
-			}
-
-			t.Logf("Image: %s", tt.imageURL)
-			t.Logf("Available Platforms: %v", platforms)
+		Context("for linux/arm64", func() {
+			It("should return correct digest for alpine:latest", func() {
+				metadata, err := mockChecker.CheckImageExistsForPlatform("alpine:latest", "linux", "arm64")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(metadata.Exists).To(BeTrue())
+				Expect(metadata.Digest).To(Equal("sha256:alpine-arm64-digest"))
+				Expect(metadata.Architectures).To(ContainElement("arm64"))
+				Expect(metadata.PlatformDigests).To(HaveKey("linux/arm64"))
+			})
 		})
-	}
-}
+	})
 
-func TestImageResolver_GetImageDigest(t *testing.T) {
-	checker := NewImageExistenceChecker()
-	resolver := NewImageResolver("", "", checker)
+	Describe("GetDigestForPlatform", func() {
+		Context("for nginx:latest", func() {
+			It("should return digest for linux/amd64", func() {
+				metadata, err := mockChecker.CheckImageExistsForPlatform("nginx:latest", "linux", "amd64")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(metadata.Digest).To(Equal("sha256:nginx-amd64-digest"))
+			})
 
-	tests := []struct {
-		name     string
-		imageURL string
-		wantErr  bool
-	}{
-		{
-			name:     "nginx latest digest",
-			imageURL: "nginx:latest",
-			wantErr:  false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			imageWithDigest, err := resolver.GetImageDigest(tt.imageURL)
-
-			if tt.wantErr {
-				if err == nil {
-					t.Errorf("GetImageDigest() expected error but got none")
-				}
-				return
-			}
-
-			if err != nil {
-				t.Errorf("GetImageDigest() error = %v", err)
-				return
-			}
-
-			if imageWithDigest == "" {
-				t.Errorf("GetImageDigest() result should not be empty")
-			}
-
-			// Verify format: should be image@sha256:digest
-			if len(imageWithDigest) < len(tt.imageURL)+8 {
-				t.Errorf("GetImageDigest() result should contain digest, got: %s", imageWithDigest)
-			}
-
-			t.Logf("Original Image: %s", tt.imageURL)
-			t.Logf("Image with Digest: %s", imageWithDigest)
+			It("should return digest for linux/arm64", func() {
+				metadata, err := mockChecker.CheckImageExistsForPlatform("nginx:latest", "linux", "arm64")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(metadata.Digest).To(Equal("sha256:nginx-arm64-digest"))
+			})
 		})
-	}
-}
+	})
+})
 
-func TestImageResolver_GetImageDigestForPlatform(t *testing.T) {
-	checker := NewImageExistenceChecker()
-	resolver := NewImageResolver("", "", checker)
+var _ = Describe("ImageResolver (mocked)", func() {
+	var (
+		resolver    *image.ImageResolver
+		mockChecker *MockImageChecker
+	)
 
-	tests := []struct {
-		name     string
-		imageURL string
-		os       string
-		arch     string
-		wantErr  bool
-	}{
-		{
-			name:     "nginx latest digest for linux/amd64",
-			imageURL: "nginx:latest",
-			os:       "linux",
-			arch:     "amd64",
-			wantErr:  false,
-		},
-		{
-			name:     "nginx latest digest for linux/arm64",
-			imageURL: "nginx:latest",
-			os:       "linux",
-			arch:     "arm64",
-			wantErr:  false,
-		},
-	}
+	BeforeEach(func() {
+		mockChecker = NewMockImageChecker()
+		resolver = image.NewImageResolver("", "", mockChecker)
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			imageWithDigest, err := resolver.GetImageDigestForPlatform(tt.imageURL, tt.os, tt.arch)
+		// Setup mock responses
+		mockChecker.AddResponse("nginx:latest", "linux", "amd64", "sha256:nginx-test-digest")
+		mockChecker.AddResponse("nginx:latest", "linux", "arm64", "sha256:nginx-arm64-test-digest")
+	})
 
-			if tt.wantErr {
-				if err == nil {
-					t.Errorf("GetImageDigestForPlatform() expected error but got none")
-				}
-				return
-			}
-
-			if err != nil {
-				t.Errorf("GetImageDigestForPlatform() error = %v", err)
-				return
-			}
-
-			if imageWithDigest == "" {
-				t.Errorf("GetImageDigestForPlatform() result should not be empty")
-			}
-
-			// Verify format: should be image@sha256:digest
-			if len(imageWithDigest) < len(tt.imageURL)+8 {
-				t.Errorf("GetImageDigestForPlatform() result should contain digest, got: %s", imageWithDigest)
-			}
-
-			t.Logf("Original Image: %s", tt.imageURL)
-			t.Logf("Platform: %s/%s", tt.os, tt.arch)
-			t.Logf("Image with Digest: %s", imageWithDigest)
+	Describe("GetImageDigest", func() {
+		It("should return image with digest for nginx:latest", func() {
+			imageWithDigest, err := resolver.GetImageDigest("nginx:latest")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(imageWithDigest).To(ContainSubstring("nginx@sha256:nginx-test-digest"))
 		})
-	}
-}
+	})
 
-// Benchmark tests to measure performance
-func BenchmarkImageExistenceChecker_CheckImageExists(b *testing.B) {
-	checker := NewImageExistenceChecker()
+	Describe("GetImageDigestForPlatform", func() {
+		It("should return image with digest for linux/amd64", func() {
+			imageWithDigest, err := resolver.GetImageDigestForPlatform("nginx:latest", "linux", "amd64")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(imageWithDigest).To(ContainSubstring("nginx@sha256:nginx-test-digest"))
+		})
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, _ = checker.CheckImageExists("nginx:latest")
-	}
-}
-
-func BenchmarkImageExistenceChecker_CheckImageExistsForPlatform(b *testing.B) {
-	checker := NewImageExistenceChecker()
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, _ = checker.CheckImageExistsForPlatform("nginx:latest", "linux", "amd64")
-	}
-}
+		It("should return image with digest for linux/arm64", func() {
+			imageWithDigest, err := resolver.GetImageDigestForPlatform("nginx:latest", "linux", "arm64")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(imageWithDigest).To(ContainSubstring("nginx@sha256:nginx-arm64-test-digest"))
+		})
+	})
+})

@@ -50,16 +50,18 @@ func NewHandler(
 	ctx := context.Background()
 	imageChecker := image.NewImageExistenceCheckerWithK8sAuth(ctx)
 
-	// Create image resolver with global config
-	imageResolver := image.NewImageResolver(
+	// Create image resolver with global config and cache support
+	imageResolver := image.NewImageResolverWithCache(
 		config.Stacks.Global.Images.Registry,
 		config.Stacks.Global.Images.RepositoryPrefix,
 		imageChecker,
+		cache,
 	)
 
-	logging.Logger.Info("Image resolver created with global config",
+	logging.Logger.Info("Image resolver created with global config and cache",
 		zap.String("global_registry", config.Stacks.Global.Images.Registry),
-		zap.String("global_repository_prefix", config.Stacks.Global.Images.RepositoryPrefix))
+		zap.String("global_repository_prefix", config.Stacks.Global.Images.RepositoryPrefix),
+		zap.Bool("cache_enabled", cache != nil))
 
 	return &Handler{
 		k8sClient:     k8sClient,
@@ -174,7 +176,8 @@ func (h *Handler) PrepareStack(c echo.Context) error {
 				zap.String("service", serviceName),
 				zap.String("image", service.Image))
 
-			imageWithDigest, err := h.imageResolver.GetImageDigest(service.Image)
+			// Use service context for platform-specific resolution and caching
+			imageWithDigest, err := h.imageResolver.GetImageDigestWithServicePlatform(service.Image, service)
 			if err != nil {
 				logging.Logger.Error("Failed to get image digest",
 					zap.String("service", serviceName),

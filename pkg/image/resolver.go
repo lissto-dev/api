@@ -1,11 +1,14 @@
 package image
 
 import (
+	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/compose-spec/compose-go/v2/types"
 	"github.com/lissto-dev/api/internal/api/common"
+	pkgcache "github.com/lissto-dev/api/pkg/cache"
 	"github.com/lissto-dev/api/pkg/logging"
 	"go.uber.org/zap"
 )
@@ -29,35 +32,73 @@ type ResolutionConfig struct {
 type ImageResolver struct {
 	globalRegistry string
 	globalPrefix   string
-	imageChecker   *ImageExistenceChecker
+	imageChecker   ImageChecker
 	defaultOS      string
 	defaultArch    string
+	cache          pkgcache.Cache // Optional cache for image digest lookups
 }
 
 // NewImageResolver creates a new image resolver
-func NewImageResolver(globalRegistry, globalPrefix string, imageChecker *ImageExistenceChecker) *ImageResolver {
+func NewImageResolver(globalRegistry, globalPrefix string, imageChecker ImageChecker) *ImageResolver {
 	return &ImageResolver{
 		globalRegistry: globalRegistry,
 		globalPrefix:   globalPrefix,
 		imageChecker:   imageChecker,
 		defaultOS:      "linux",
 		defaultArch:    "amd64",
+		cache:          nil, // No cache by default
 	}
 }
 
 // NewImageResolverWithPlatform creates a new image resolver with custom platform defaults
-func NewImageResolverWithPlatform(globalRegistry, globalPrefix string, imageChecker *ImageExistenceChecker, defaultOS, defaultArch string) *ImageResolver {
+func NewImageResolverWithPlatform(globalRegistry, globalPrefix string, imageChecker ImageChecker, defaultOS, defaultArch string) *ImageResolver {
 	return &ImageResolver{
 		globalRegistry: globalRegistry,
 		globalPrefix:   globalPrefix,
 		imageChecker:   imageChecker,
 		defaultOS:      defaultOS,
 		defaultArch:    defaultArch,
+		cache:          nil, // No cache by default
+	}
+}
+
+// NewImageResolverWithCache creates a new image resolver with caching enabled
+func NewImageResolverWithCache(globalRegistry, globalPrefix string, imageChecker ImageChecker, cache pkgcache.Cache) *ImageResolver {
+	return &ImageResolver{
+		globalRegistry: globalRegistry,
+		globalPrefix:   globalPrefix,
+		imageChecker:   imageChecker,
+		defaultOS:      "linux",
+		defaultArch:    "amd64",
+		cache:          cache,
 	}
 }
 
 // ResolveImage determines the final container image URL for a service
+// Priority: lissto.dev/image (complete override) → registry + repository + tag resolution
 func (ir *ImageResolver) ResolveImage(service types.ServiceConfig, config ResolutionConfig) (string, error) {
+	// Step 0: Check for complete image override label (highest priority)
+	if imageOverride := ir.getLabelValue(service.Labels, "lissto.dev/image", ""); imageOverride != "" {
+		logging.Logger.Info("Using image override from label",
+			zap.String("service", service.Name),
+			zap.String("override_image", imageOverride))
+
+		// Still validate that the image exists
+		metadata, err := ir.imageChecker.CheckImageExists(imageOverride)
+		if err == nil && metadata.Exists {
+			logging.Logger.Info("Image override validated successfully",
+				zap.String("image", imageOverride),
+				zap.String("service", service.Name))
+			return imageOverride, nil
+		}
+
+		logging.Logger.Warn("Image override label specified but image not found",
+			zap.String("image", imageOverride),
+			zap.String("service", service.Name),
+			zap.Error(err))
+		return "", fmt.Errorf("image override '%s' for service %s not found: %w", imageOverride, service.Name, err)
+	}
+
 	// Step 1: Resolve registry
 	registry := ir.ResolveRegistryWithCompose(service, config.ComposeRegistry)
 
@@ -235,10 +276,38 @@ type DetailedImageResolutionResult struct {
 }
 
 // ResolveImageWithCandidates tries multiple candidates, returns which worked
+// Priority: lissto.dev/image (complete override) → registry + repository + tag resolution
 func (ir *ImageResolver) ResolveImageWithCandidates(
 	service types.ServiceConfig,
 	config ResolutionConfig,
 ) (*ImageResolutionResult, error) {
+	// Step 0: Check for complete image override label (highest priority)
+	if imageOverride := ir.getLabelValue(service.Labels, "lissto.dev/image", ""); imageOverride != "" {
+		logging.Logger.Info("Using image override from label",
+			zap.String("service", service.Name),
+			zap.String("override_image", imageOverride))
+
+		// Try to get image with digest using service-specific platform
+		imageWithDigest, err := ir.GetImageDigestWithServicePlatform(imageOverride, service)
+		if err == nil {
+			logging.Logger.Info("Image override resolved successfully with digest",
+				zap.String("image", imageWithDigest),
+				zap.String("service", service.Name))
+
+			return &ImageResolutionResult{
+				FinalImage: imageWithDigest,
+				Method:     "override",
+				Selected:   imageOverride,
+			}, nil
+		}
+
+		logging.Logger.Warn("Image override label specified but image not found",
+			zap.String("image", imageOverride),
+			zap.String("service", service.Name),
+			zap.Error(err))
+		return nil, fmt.Errorf("image override '%s' for service %s not found: %w", imageOverride, service.Name, err)
+	}
+
 	// Step 1: Resolve registry
 	registry := ir.ResolveRegistryWithCompose(service, config.ComposeRegistry)
 
@@ -435,9 +504,93 @@ func (ir *ImageResolver) GetImageDigestForPlatform(imageURL, os, arch string) (s
 	return ir.formatImageWithDigest(imageURL, metadata.Digest), nil
 }
 
+// GetImageDigestWithCacheContext resolves an image URL to its digest with caching support
+// Uses service context to determine if it's an infra or service image for cache TTL decisions
+func (ir *ImageResolver) GetImageDigestWithCacheContext(imageURL, os, arch string, service types.ServiceConfig) (string, error) {
+	// If no cache is configured, fall back to non-cached behavior
+	if ir.cache == nil {
+		return ir.GetImageDigestForPlatform(imageURL, os, arch)
+	}
+
+	ctx := context.Background()
+	isInfra := IsInfraImage(service)
+	imageType := GetImageType(isInfra)
+
+	// Check if this image should be cached
+	if !ShouldCache(isInfra, imageURL) {
+		logging.Logger.Debug("Image not cacheable, skipping cache",
+			zap.String("image", imageURL),
+			zap.String("image_type", imageType),
+			zap.String("platform", os+"/"+arch))
+		return ir.GetImageDigestForPlatform(imageURL, os, arch)
+	}
+
+	// Check cache first
+	cacheKey := GetCacheKey(imageURL, os, arch)
+	var cachedEntry pkgcache.ImageDigestCache
+
+	err := ir.cache.Get(ctx, cacheKey, &cachedEntry)
+	if err == nil {
+		// Cache hit!
+		logging.Logger.Info("Image digest cache HIT",
+			zap.String("image", imageURL),
+			zap.String("image_type", imageType),
+			zap.String("platform", os+"/"+arch),
+			zap.String("digest", cachedEntry.Digest),
+			zap.Time("cached_at", cachedEntry.CachedAt))
+		return cachedEntry.Digest, nil
+	}
+
+	// Cache miss - log it
+	logging.Logger.Debug("Image digest cache MISS",
+		zap.String("image", imageURL),
+		zap.String("image_type", imageType),
+		zap.String("platform", os+"/"+arch))
+
+	// Fetch from registry
+	digest, err := ir.GetImageDigestForPlatform(imageURL, os, arch)
+	if err != nil {
+		return "", err
+	}
+
+	// Store in cache with appropriate TTL
+	ttl := GetTTL(isInfra, imageURL)
+	if ttl > 0 {
+		cacheEntry := pkgcache.ImageDigestCache{
+			ImageURL:  imageURL,
+			Digest:    digest,
+			Platform:  fmt.Sprintf("%s/%s", os, arch),
+			ImageType: imageType,
+			CachedAt:  time.Now(),
+		}
+
+		if err := ir.cache.Set(ctx, cacheKey, cacheEntry, ttl); err != nil {
+			// Log error but don't fail - cache is optional
+			logging.Logger.Warn("Failed to cache image digest",
+				zap.String("image", imageURL),
+				zap.Error(err))
+		} else {
+			logging.Logger.Info("Cached image digest",
+				zap.String("image", imageURL),
+				zap.String("image_type", imageType),
+				zap.String("platform", os+"/"+arch),
+				zap.Duration("ttl", ttl))
+		}
+	}
+
+	return digest, nil
+}
+
 // GetImageDigestWithServicePlatform resolves an image URL to its digest using service-specific platform configuration
 func (ir *ImageResolver) GetImageDigestWithServicePlatform(imageURL string, service types.ServiceConfig) (string, error) {
 	os, arch := ir.getPlatformFromService(service)
+
+	// If cache is available, use the cache-aware method
+	if ir.cache != nil {
+		return ir.GetImageDigestWithCacheContext(imageURL, os, arch, service)
+	}
+
+	// Otherwise use the standard method
 	return ir.GetImageDigestForPlatform(imageURL, os, arch)
 }
 

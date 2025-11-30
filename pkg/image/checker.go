@@ -30,6 +30,12 @@ type ImageMetadata struct {
 	ManifestType    string            // Type of manifest retrieved
 }
 
+// ImageChecker is an interface for checking image existence
+type ImageChecker interface {
+	CheckImageExists(imageURL string) (*ImageMetadata, error)
+	CheckImageExistsForPlatform(imageURL, os, arch string) (*ImageMetadata, error)
+}
+
 // ImageExistenceChecker checks if container images exist in registries
 type ImageExistenceChecker struct {
 	systemContext *types.SystemContext

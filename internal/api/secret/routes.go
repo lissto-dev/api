@@ -13,3 +13,4 @@ func RegisterRoutes(g *echo.Group, handler *Handler) {
 	g.DELETE("/:id", handler.DeleteSecret)
 }
 
+

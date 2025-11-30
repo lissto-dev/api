@@ -75,16 +75,15 @@ func New(
 		publicURL:  publicURL,
 	}
 
-	// Create in-memory cache for prepare results
-	memCache := cache.NewMemoryCache()
-	logging.Logger.Info("Initialized in-memory cache for prepare results")
+	// Create image cache (file-based in dev via IMAGE_CACHE_FILE_PATH, memory-based otherwise)
+	imageCache := cache.NewImageCache()
 
 	// Create handlers with dependencies
-	stackHandler := stack.NewHandler(k8sClient, authorizer, nsManager, cfg, memCache)
+	stackHandler := stack.NewHandler(k8sClient, authorizer, nsManager, cfg, imageCache)
 	blueprintHandler := blueprint.NewHandler(k8sClient, authorizer, nsManager, cfg)
 	envHandler := env.NewHandler(k8sClient, authorizer, nsManager, cfg)
 	userHandler := user.NewHandler()
-	prepareHandler := prepare.NewHandler(k8sClient, authorizer, nsManager, cfg, memCache)
+	prepareHandler := prepare.NewHandler(k8sClient, authorizer, nsManager, cfg, imageCache)
 	variableHandler := variable.NewHandler(k8sClient, authorizer, nsManager, cfg)
 	secretHandler := secret.NewHandler(k8sClient, authorizer, nsManager, cfg)
 
