@@ -236,7 +236,8 @@ var _ = Describe("ImageResolver - Image Override Label", func() {
 			result, err := resolver.ResolveImage(service, config)
 
 			Expect(err).ToNot(HaveOccurred())
-			Expect(result).To(Equal(overrideImage))
+			// ResolveImage now returns image with digest (consistent with ResolveImageWithCandidates)
+			Expect(result).To(Equal("123456789012.dkr.ecr.us-east-1.amazonaws.com/docker-hub/library/nginx@sha256:mockdigest"))
 		})
 
 		It("should work with ResolveImageWithCandidates", func() {
@@ -306,7 +307,8 @@ var _ = Describe("ImageResolver - Image Override Label", func() {
 			result, err := resolver.ResolveImage(service, config)
 
 			Expect(err).ToNot(HaveOccurred())
-			Expect(result).To(Equal(overrideImage), "Should use override, not normal resolution")
+			// Should use override with digest, not normal resolution
+			Expect(result).To(Equal("override.io/custom/image@sha256:mockdigest"))
 		})
 
 		It("should handle ECR pull-through cache pattern", func() {
@@ -327,7 +329,117 @@ var _ = Describe("ImageResolver - Image Override Label", func() {
 			result, err := resolver.ResolveImage(service, config)
 
 			Expect(err).ToNot(HaveOccurred())
-			Expect(result).To(Equal(ecrPullThrough))
+			// Now correctly strips :15-alpine tag using port range check
+			Expect(result).To(Equal("123456789012.dkr.ecr.us-east-1.amazonaws.com/docker-hub/library/postgres@sha256:mockdigest"))
+		})
+
+		It("should prioritize lissto.dev/image over service image field", func() {
+			// This is the bug fix: when both image field and lissto.dev/image exist,
+			// the label should take priority (REGRESSION TEST)
+			overrideImage := "private.registry.io/custom/nginx:v1.2.3"
+			originalImage := "nginx:alpine"
+
+			mockChecker.existingImages[overrideImage] = true
+			// Even if original image exists, should NOT use it
+			mockChecker.existingImages[originalImage] = true
+
+			service := types.ServiceConfig{
+				Name:  "web",
+				Image: originalImage, // This should be IGNORED when label is present
+				Labels: map[string]string{
+					"lissto.dev/image": overrideImage, // This should WIN
+				},
+			}
+
+			config := image.ResolutionConfig{}
+
+			result, err := resolver.ResolveImage(service, config)
+
+			Expect(err).ToNot(HaveOccurred())
+			// Should use override image, NOT the original image field
+			Expect(result).To(Equal("private.registry.io/custom/nginx@sha256:mockdigest"))
+			// Explicitly verify we didn't use the original
+			Expect(result).ToNot(ContainSubstring("nginx:alpine"))
+		})
+
+		It("should handle image field when no override label exists", func() {
+			// When NO lissto.dev/image label, should use normal resolution (image field)
+			// The resolver will try: 1) original tag 2) latest
+			// Since service has Image field, it extracts the tag and tries it
+			originalImage := "redis:7-alpine"
+			// The resolver gets the tag "7-alpine" from the image field
+			// and tries: global-registry.io/global-prefix/redis:7-alpine (because service has no lissto.dev/repository)
+			// But we can't predict the exact constructed path without knowing resolver internals
+			// So let's use a service that has an explicit lissto.dev/repository to control the path
+
+			mockChecker.existingImages["global.registry.io/custom-redis:7-alpine"] = true
+
+			service := types.ServiceConfig{
+				Name:  "redis",
+				Image: originalImage,
+				Labels: map[string]string{
+					// No lissto.dev/image label
+					"lissto.dev/repository": "custom-redis", // This helps us control the image name
+				},
+			}
+
+			config := image.ResolutionConfig{}
+
+			result, err := resolver.ResolveImage(service, config)
+
+			Expect(err).ToNot(HaveOccurred())
+			// Should use the image field since no override, with original tag priority
+			Expect(result).To(Equal("global.registry.io/custom-redis:7-alpine"))
+		})
+
+		It("should correctly distinguish ports from tags using port range", func() {
+			// Test case 1: Valid port (should be preserved)
+			validPort := "registry.com:5000/nginx:latest"
+			mockChecker.existingImages[validPort] = true
+
+			service1 := types.ServiceConfig{
+				Name: "nginx",
+				Labels: map[string]string{
+					"lissto.dev/image": validPort,
+				},
+			}
+
+			result1, err1 := resolver.ResolveImage(service1, image.ResolutionConfig{})
+			Expect(err1).ToNot(HaveOccurred())
+			// Port 5000 is valid, tag :latest is stripped
+			Expect(result1).To(Equal("registry.com:5000/nginx@sha256:mockdigest"))
+
+			// Test case 2: Tag starting with number (should be stripped)
+			tagWithNumber := "redis:7-alpine"
+			mockChecker.existingImages[tagWithNumber] = true
+
+			service2 := types.ServiceConfig{
+				Name: "redis",
+				Labels: map[string]string{
+					"lissto.dev/image": tagWithNumber,
+				},
+			}
+
+			result2, err2 := resolver.ResolveImage(service2, image.ResolutionConfig{})
+			Expect(err2).ToNot(HaveOccurred())
+			// :7-alpine is not a valid port (contains hyphen), gets stripped
+			Expect(result2).To(Equal("redis@sha256:mockdigest"))
+
+			// Test case 3: Invalid port number > 65535 (treated as tag, stripped)
+			invalidPort := "registry.com:65536/app:v1"
+			mockChecker.existingImages[invalidPort] = true
+
+			service3 := types.ServiceConfig{
+				Name: "app",
+				Labels: map[string]string{
+					"lissto.dev/image": invalidPort,
+				},
+			}
+
+			result3, err3 := resolver.ResolveImage(service3, image.ResolutionConfig{})
+			Expect(err3).ToNot(HaveOccurred())
+			// Port 65536 is out of range, treated as tag and stripped along with :v1
+			Expect(result3).To(Equal("registry.com:65536/app@sha256:mockdigest"))
 		})
 	})
 

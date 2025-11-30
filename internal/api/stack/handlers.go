@@ -277,6 +277,7 @@ func (h *Handler) CreateStack(c echo.Context) error {
 			},
 			Annotations: map[string]string{
 				"lissto.dev/blueprint-title": blueprintTitle,
+				"lissto.dev/created-by":      user.Name, // NEW: for metadata injection
 			},
 		},
 		Spec: envv1alpha1.StackSpec{
@@ -634,33 +635,52 @@ func (h *Handler) parseDockerCompose(composeContent string) (*types.Project, err
 
 // generateKubernetesManifests converts Docker Compose project to Kubernetes manifests using Kompose
 func (h *Handler) generateKubernetesManifests(project *types.Project, namespace, stackName string) (string, error) {
-	// 1. Serialize preprocessed project to compose YAML
+	// 1. Extract service labels before Kompose conversion (for command override)
+	serviceLabelMap := h.extractServiceLabels(project)
+
+	// 2. Serialize preprocessed project to compose YAML
 	ser := serializer.NewComposeSerializer()
 	composeYAML, err := ser.Serialize(project)
 	if err != nil {
 		return "", fmt.Errorf("failed to serialize Docker Compose: %w", err)
 	}
 
-	// 2. Convert with Kompose (pure conversion)
+	// 3. Convert with Kompose (pure conversion)
 	converter := kompose.NewConverter(namespace)
 	objects, err := converter.ConvertToObjects(composeYAML)
 	if err != nil {
 		return "", fmt.Errorf("kompose conversion failed: %w", err)
 	}
 
-	// 3. Post-process: normalize PVC accessModes to ReadWriteOnce
+	// 4. Post-process: normalize PVC accessModes to ReadWriteOnce
 	pvcNormalizer := postprocessor.NewPVCAccessModeNormalizer()
 	objects = pvcNormalizer.NormalizeAccessModes(objects)
 
-	// 4. Post-process: inject stack labels to pod templates
+	// 5. Post-process: inject stack labels to pod templates
 	labelInjector := postprocessor.NewStackLabelInjector()
 	objects = labelInjector.InjectLabels(objects, stackName)
 
-	// 5. Serialize to YAML
+	// 6. Post-process: override commands based on lissto.dev labels
+	commandOverrider := postprocessor.NewCommandOverrider()
+	objects = commandOverrider.OverrideCommands(objects, serviceLabelMap)
+
+	// 7. Serialize to YAML
 	yamlManifests, err := converter.SerializeToYAML(objects)
 	if err != nil {
 		return "", fmt.Errorf("YAML serialization failed: %w", err)
 	}
 
 	return yamlManifests, nil
+}
+
+// extractServiceLabels extracts labels from each service before Kompose conversion
+// This is needed for command override postprocessor which needs access to original labels
+func (h *Handler) extractServiceLabels(project *types.Project) map[string]map[string]string {
+	labelMap := make(map[string]map[string]string)
+	for name, service := range project.Services {
+		if service.Labels != nil {
+			labelMap[name] = service.Labels
+		}
+	}
+	return labelMap
 }

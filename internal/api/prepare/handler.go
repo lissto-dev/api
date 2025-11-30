@@ -170,8 +170,56 @@ func (h *Handler) PrepareStack(c echo.Context) error {
 		var info common.DetailedImageResolutionInfo
 		info.Service = serviceName
 
-		// If service has image, resolve to digest
-		if service.Image != "" {
+		// PRIORITY: Check for lissto.dev/image override label first
+		imageOverride := ""
+		if service.Labels != nil {
+			if override, ok := service.Labels["lissto.dev/image"]; ok && override != "" {
+				imageOverride = override
+			}
+		}
+
+		// If service has image override label, use it with highest priority
+		if imageOverride != "" {
+			logging.Logger.Info("Using image override from label",
+				zap.String("service", serviceName),
+				zap.String("override_image", imageOverride))
+
+			// Use service context for platform-specific resolution and caching
+			imageWithDigest, err := h.imageResolver.GetImageDigestWithServicePlatform(imageOverride, service)
+			if err != nil {
+				logging.Logger.Error("Failed to get image digest for override",
+					zap.String("service", serviceName),
+					zap.String("override_image", imageOverride),
+					zap.Error(err))
+
+				// In detailed mode, continue processing and show the error
+				if req.Detailed {
+					info.Image = imageOverride // Keep override image even on error
+					info.Method = "override"
+					info.Candidates = []common.ImageCandidate{{
+						ImageURL: imageOverride,
+						Tag:      "override",
+						Source:   "override",
+						Success:  false,
+						Error:    err.Error(),
+					}}
+				} else {
+					return c.String(400, fmt.Sprintf("Failed to resolve override image for service %s: %v", serviceName, err))
+				}
+			} else {
+				info.Digest = imageWithDigest // Full digest (e.g., nginx@sha256:...)
+				info.Image = imageOverride    // User-friendly tag (e.g., nginx:alpine)
+				info.Method = "override"
+				info.Candidates = []common.ImageCandidate{{
+					ImageURL: imageOverride,
+					Tag:      "override",
+					Source:   "override",
+					Success:  true,
+					Digest:   imageWithDigest,
+				}}
+			}
+		} else if service.Image != "" {
+			// If service has image, resolve to digest
 			logging.Logger.Info("Service has explicit image, resolving to digest",
 				zap.String("service", serviceName),
 				zap.String("image", service.Image))

@@ -3,6 +3,7 @@ package image
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -83,13 +84,13 @@ func (ir *ImageResolver) ResolveImage(service types.ServiceConfig, config Resolu
 			zap.String("service", service.Name),
 			zap.String("override_image", imageOverride))
 
-		// Still validate that the image exists
-		metadata, err := ir.imageChecker.CheckImageExists(imageOverride)
-		if err == nil && metadata.Exists {
-			logging.Logger.Info("Image override validated successfully",
-				zap.String("image", imageOverride),
+		// Use cache-aware method to get image with digest
+		imageWithDigest, err := ir.GetImageDigestWithServicePlatform(imageOverride, service)
+		if err == nil {
+			logging.Logger.Info("Image override resolved successfully with digest",
+				zap.String("image", imageWithDigest),
 				zap.String("service", service.Name))
-			return imageOverride, nil
+			return imageWithDigest, nil
 		}
 
 		logging.Logger.Warn("Image override label specified but image not found",
@@ -618,32 +619,49 @@ func (ir *ImageResolver) formatImageWithDigest(imageURL, digest string) string {
 	}
 
 	// Find the last colon that separates the tag from the repository
-	// We need to be careful about port numbers in registry URLs
+	// We need to distinguish between:
+	// - Port numbers: registry.com:5000/image (valid port 1-65535)
+	// - Tags: image:15-alpine, image:v1.2.3 (not valid ports)
 	lastColonIndex := -1
 
 	// Start from the end and work backwards
 	for i := len(imageURL) - 1; i >= 0; i-- {
 		if imageURL[i] == ':' {
 			// Check if this colon is part of a port number
-			// Port numbers are typically after a slash and before another slash or end
 			isPort := false
 
-			// Look backwards for a slash to see if this colon is after a registry host
+			// Look backwards for a slash to determine context
+			hasSlashBefore := false
 			for j := i - 1; j >= 0; j-- {
 				if imageURL[j] == '/' {
-					// Found a slash before the colon, check if next chars are digits
-					if i+1 < len(imageURL) {
-						nextChar := imageURL[i+1]
-						if nextChar >= '0' && nextChar <= '9' {
-							isPort = true
-						}
-					}
+					hasSlashBefore = true
 					break
 				}
 			}
 
+			// If there's a slash before this colon, it might be a port
+			if hasSlashBefore {
+				// Extract substring between colon and next slash (or end)
+				endPos := len(imageURL)
+				for k := i + 1; k < len(imageURL); k++ {
+					if imageURL[k] == '/' {
+						endPos = k
+						break
+					}
+				}
+
+				// Try to parse as port number
+				portStr := imageURL[i+1 : endPos]
+				if port, err := strconv.Atoi(portStr); err == nil {
+					// Valid integer - check if it's in valid port range (1-65535)
+					if port >= 1 && port <= 65535 {
+						isPort = true
+					}
+				}
+			}
+
 			if !isPort {
-				// This colon is likely separating tag from repository
+				// This colon is separating tag from repository
 				lastColonIndex = i
 				break
 			}
