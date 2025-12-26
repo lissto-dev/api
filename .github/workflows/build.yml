@@ -86,8 +86,18 @@ jobs:
             TAG_NAME=${GITHUB_REF#refs/tags/}
             echo "is_tag=true" >> $GITHUB_OUTPUT
             echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
+            
+            # Check if it's a stable release (vX.Y.Z format only, no suffix)
+            if [[ "$TAG_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "is_stable_release=true" >> $GITHUB_OUTPUT
+              echo "Detected stable release: $TAG_NAME"
+            else
+              echo "is_stable_release=false" >> $GITHUB_OUTPUT
+              echo "Detected pre-release: $TAG_NAME"
+            fi
           else
             echo "is_tag=false" >> $GITHUB_OUTPUT
+            echo "is_stable_release=false" >> $GITHUB_OUTPUT
           fi
           
           # Determine if this is a main branch build
@@ -108,7 +118,7 @@ jobs:
             GITHUB_TOKEN=${{ steps.app-token.outputs.token }}
           tags: |
             ${{ steps.meta.outputs.is_tag == 'true' && format('{0}:{1}', env.IMAGE_NAME, steps.meta.outputs.tag_name) || format('{0}:{1}', env.IMAGE_NAME, steps.meta.outputs.short_sha) }}
-            ${{ (steps.meta.outputs.is_main == 'true' || steps.meta.outputs.is_tag == 'true') && format('{0}:latest', env.IMAGE_NAME) || '' }}
+            ${{ steps.meta.outputs.is_stable_release == 'true' && format('{0}:latest', env.IMAGE_NAME) || '' }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
