@@ -10,6 +10,7 @@ import (
 	"github.com/lissto-dev/api/pkg/authz"
 	"github.com/lissto-dev/api/pkg/k8s"
 	"github.com/lissto-dev/api/pkg/logging"
+	"github.com/lissto-dev/api/pkg/metadata"
 	envv1alpha1 "github.com/lissto-dev/controller/api/v1alpha1"
 	operatorConfig "github.com/lissto-dev/controller/pkg/config"
 	"go.uber.org/zap"
@@ -54,12 +55,14 @@ type UpdateVariableRequest struct {
 
 // VariableResponse represents a variable config response
 type VariableResponse struct {
-	ID         string            `json:"id"`
-	Name       string            `json:"name"`
-	Scope      string            `json:"scope"`
-	Env        string            `json:"env,omitempty"`
-	Repository string            `json:"repository,omitempty"`
-	Data       map[string]string `json:"data"`
+	ID           string            `json:"id"`
+	Name         string            `json:"name"`
+	Scope        string            `json:"scope"`
+	Env          string            `json:"env,omitempty"`
+	Repository   string            `json:"repository,omitempty"`
+	Data         map[string]string `json:"data"`
+	CreatedAt    string            `json:"created_at,omitempty"`
+	KeyUpdatedAt map[string]int64  `json:"key_updated_at,omitempty"` // Unix timestamps per key
 }
 
 // CreateVariable handles POST /variables
@@ -152,6 +155,13 @@ func (h *Handler) CreateVariable(c echo.Context) error {
 		},
 	}
 
+	// Track key timestamps for all initial keys
+	keys := make([]string, 0, len(req.Data))
+	for key := range req.Data {
+		keys = append(keys, key)
+	}
+	metadata.UpdateKeyTimestamps(variable, keys)
+
 	if err := h.k8sClient.CreateLisstoVariable(c.Request().Context(), variable); err != nil {
 		logging.Logger.Error("Failed to create variable",
 			zap.String("name", req.Name),
@@ -208,23 +218,27 @@ func (h *Handler) GetVariables(c echo.Context) error {
 	var variables []VariableResponse
 	for _, v := range variableList.Items {
 		variables = append(variables, VariableResponse{
-			ID:         fmt.Sprintf("%s/%s", v.Namespace, v.Name),
-			Name:       v.Name,
-			Scope:      v.GetScope(),
-			Env:        v.Spec.Env,
-			Repository: v.Spec.Repository,
-			Data:       v.Spec.Data,
+			ID:           fmt.Sprintf("%s/%s", v.Namespace, v.Name),
+			Name:         v.Name,
+			Scope:        v.GetScope(),
+			Env:          v.Spec.Env,
+			Repository:   v.Spec.Repository,
+			Data:         v.Spec.Data,
+			CreatedAt:    v.CreationTimestamp.Format("2006-01-02T15:04:05Z07:00"),
+			KeyUpdatedAt: metadata.GetKeyTimestamps(&v),
 		})
 	}
 	if globalList != nil {
 		for _, v := range globalList.Items {
 			variables = append(variables, VariableResponse{
-				ID:         fmt.Sprintf("%s/%s", v.Namespace, v.Name),
-				Name:       v.Name,
-				Scope:      v.GetScope(),
-				Env:        v.Spec.Env,
-				Repository: v.Spec.Repository,
-				Data:       v.Spec.Data,
+				ID:           fmt.Sprintf("%s/%s", v.Namespace, v.Name),
+				Name:         v.Name,
+				Scope:        v.GetScope(),
+				Env:          v.Spec.Env,
+				Repository:   v.Spec.Repository,
+				Data:         v.Spec.Data,
+				CreatedAt:    v.CreationTimestamp.Format("2006-01-02T15:04:05Z07:00"),
+				KeyUpdatedAt: metadata.GetKeyTimestamps(&v),
 			})
 		}
 	}
@@ -278,12 +292,14 @@ func (h *Handler) GetVariable(c echo.Context) error {
 	}
 
 	return c.JSON(200, VariableResponse{
-		ID:         fmt.Sprintf("%s/%s", variable.Namespace, variable.Name),
-		Name:       variable.Name,
-		Scope:      variable.GetScope(),
-		Env:        variable.Spec.Env,
-		Repository: variable.Spec.Repository,
-		Data:       variable.Spec.Data,
+		ID:           fmt.Sprintf("%s/%s", variable.Namespace, variable.Name),
+		Name:         variable.Name,
+		Scope:        variable.GetScope(),
+		Env:          variable.Spec.Env,
+		Repository:   variable.Spec.Repository,
+		Data:         variable.Spec.Data,
+		CreatedAt:    variable.CreationTimestamp.Format("2006-01-02T15:04:05Z07:00"),
+		KeyUpdatedAt: metadata.GetKeyTimestamps(variable),
 	})
 }
 
@@ -346,6 +362,13 @@ func (h *Handler) UpdateVariable(c echo.Context) error {
 	// Update data
 	variable.Spec.Data = req.Data
 
+	// Track key timestamps for updated keys
+	keys := make([]string, 0, len(req.Data))
+	for key := range req.Data {
+		keys = append(keys, key)
+	}
+	metadata.UpdateKeyTimestamps(variable, keys)
+
 	if err := h.k8sClient.UpdateLisstoVariable(c.Request().Context(), variable); err != nil {
 		logging.Logger.Error("Failed to update variable",
 			zap.String("name", name),
@@ -360,12 +383,14 @@ func (h *Handler) UpdateVariable(c echo.Context) error {
 		zap.String("user", user.Name))
 
 	return c.JSON(200, VariableResponse{
-		ID:         fmt.Sprintf("%s/%s", variable.Namespace, variable.Name),
-		Name:       variable.Name,
-		Scope:      variable.GetScope(),
-		Env:        variable.Spec.Env,
-		Repository: variable.Spec.Repository,
-		Data:       variable.Spec.Data,
+		ID:           fmt.Sprintf("%s/%s", variable.Namespace, variable.Name),
+		Name:         variable.Name,
+		Scope:        variable.GetScope(),
+		Env:          variable.Spec.Env,
+		Repository:   variable.Spec.Repository,
+		Data:         variable.Spec.Data,
+		CreatedAt:    variable.CreationTimestamp.Format("2006-01-02T15:04:05Z07:00"),
+		KeyUpdatedAt: metadata.GetKeyTimestamps(variable),
 	})
 }
 

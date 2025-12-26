@@ -11,6 +11,7 @@ import (
 	"github.com/lissto-dev/api/pkg/authz"
 	"github.com/lissto-dev/api/pkg/k8s"
 	"github.com/lissto-dev/api/pkg/logging"
+	"github.com/lissto-dev/api/pkg/metadata"
 	envv1alpha1 "github.com/lissto-dev/controller/api/v1alpha1"
 	operatorConfig "github.com/lissto-dev/controller/pkg/config"
 	"go.uber.org/zap"
@@ -56,12 +57,14 @@ type SetSecretRequest struct {
 
 // SecretResponse represents a secret config response (write-only - no values)
 type SecretResponse struct {
-	ID         string   `json:"id"`
-	Name       string   `json:"name"`
-	Scope      string   `json:"scope"`
-	Env        string   `json:"env,omitempty"`
-	Repository string   `json:"repository,omitempty"`
-	Keys       []string `json:"keys"` // Only key names, never values
+	ID           string           `json:"id"`
+	Name         string           `json:"name"`
+	Scope        string           `json:"scope"`
+	Env          string           `json:"env,omitempty"`
+	Repository   string           `json:"repository,omitempty"`
+	Keys         []string         `json:"keys"` // Only key names, never values
+	CreatedAt    string           `json:"created_at,omitempty"`
+	KeyUpdatedAt map[string]int64 `json:"key_updated_at,omitempty"` // Unix timestamps per key
 }
 
 // CreateSecret handles POST /secrets
@@ -163,6 +166,9 @@ func (h *Handler) CreateSecret(c echo.Context) error {
 		},
 	}
 
+	// Track key timestamps for all initial keys
+	metadata.UpdateKeyTimestamps(lisstoSecret, keys)
+
 	if err := h.k8sClient.CreateLisstoSecret(c.Request().Context(), lisstoSecret); err != nil {
 		logging.Logger.Error("Failed to create lissto secret",
 			zap.String("name", req.Name),
@@ -254,23 +260,27 @@ func (h *Handler) GetSecrets(c echo.Context) error {
 	var secrets []SecretResponse
 	for _, s := range secretList.Items {
 		secrets = append(secrets, SecretResponse{
-			ID:         fmt.Sprintf("%s/%s", s.Namespace, s.Name),
-			Name:       s.Name,
-			Scope:      s.GetScope(),
-			Env:        s.Spec.Env,
-			Repository: s.Spec.Repository,
-			Keys:       s.Spec.Keys,
+			ID:           fmt.Sprintf("%s/%s", s.Namespace, s.Name),
+			Name:         s.Name,
+			Scope:        s.GetScope(),
+			Env:          s.Spec.Env,
+			Repository:   s.Spec.Repository,
+			Keys:         s.Spec.Keys,
+			CreatedAt:    s.CreationTimestamp.Format("2006-01-02T15:04:05Z07:00"),
+			KeyUpdatedAt: metadata.GetKeyTimestamps(&s),
 		})
 	}
 	if globalList != nil {
 		for _, s := range globalList.Items {
 			secrets = append(secrets, SecretResponse{
-				ID:         fmt.Sprintf("%s/%s", s.Namespace, s.Name),
-				Name:       s.Name,
-				Scope:      s.GetScope(),
-				Env:        s.Spec.Env,
-				Repository: s.Spec.Repository,
-				Keys:       s.Spec.Keys,
+				ID:           fmt.Sprintf("%s/%s", s.Namespace, s.Name),
+				Name:         s.Name,
+				Scope:        s.GetScope(),
+				Env:          s.Spec.Env,
+				Repository:   s.Spec.Repository,
+				Keys:         s.Spec.Keys,
+				CreatedAt:    s.CreationTimestamp.Format("2006-01-02T15:04:05Z07:00"),
+				KeyUpdatedAt: metadata.GetKeyTimestamps(&s),
 			})
 		}
 	}
@@ -325,12 +335,14 @@ func (h *Handler) GetSecret(c echo.Context) error {
 
 	// Return keys only, no values (write-only)
 	return c.JSON(200, SecretResponse{
-		ID:         fmt.Sprintf("%s/%s", lisstoSecret.Namespace, lisstoSecret.Name),
-		Name:       lisstoSecret.Name,
-		Scope:      lisstoSecret.GetScope(),
-		Env:        lisstoSecret.Spec.Env,
-		Repository: lisstoSecret.Spec.Repository,
-		Keys:       lisstoSecret.Spec.Keys,
+		ID:           fmt.Sprintf("%s/%s", lisstoSecret.Namespace, lisstoSecret.Name),
+		Name:         lisstoSecret.Name,
+		Scope:        lisstoSecret.GetScope(),
+		Env:          lisstoSecret.Spec.Env,
+		Repository:   lisstoSecret.Spec.Repository,
+		Keys:         lisstoSecret.Spec.Keys,
+		CreatedAt:    lisstoSecret.CreationTimestamp.Format("2006-01-02T15:04:05Z07:00"),
+		KeyUpdatedAt: metadata.GetKeyTimestamps(lisstoSecret),
 	})
 }
 
@@ -398,11 +410,16 @@ func (h *Handler) UpdateSecret(c echo.Context) error {
 	oldKeys := make([]string, len(lisstoSecret.Spec.Keys))
 	copy(oldKeys, lisstoSecret.Spec.Keys)
 
+	updatedKeys := []string{}
 	for k := range req.Secrets {
+		updatedKeys = append(updatedKeys, k)
 		if !existingKeys[k] {
 			lisstoSecret.Spec.Keys = append(lisstoSecret.Spec.Keys, k)
 		}
 	}
+
+	// Track key timestamps for all updated keys
+	metadata.UpdateKeyTimestamps(lisstoSecret, updatedKeys)
 
 	if err := h.k8sClient.UpdateLisstoSecret(c.Request().Context(), lisstoSecret); err != nil {
 		logging.Logger.Error("Failed to update lissto secret metadata",
@@ -466,12 +483,14 @@ func (h *Handler) UpdateSecret(c echo.Context) error {
 		zap.Int("keys", len(lisstoSecret.Spec.Keys)))
 
 	return c.JSON(200, SecretResponse{
-		ID:         fmt.Sprintf("%s/%s", lisstoSecret.Namespace, lisstoSecret.Name),
-		Name:       lisstoSecret.Name,
-		Scope:      lisstoSecret.GetScope(),
-		Env:        lisstoSecret.Spec.Env,
-		Repository: lisstoSecret.Spec.Repository,
-		Keys:       lisstoSecret.Spec.Keys,
+		ID:           fmt.Sprintf("%s/%s", lisstoSecret.Namespace, lisstoSecret.Name),
+		Name:         lisstoSecret.Name,
+		Scope:        lisstoSecret.GetScope(),
+		Env:          lisstoSecret.Spec.Env,
+		Repository:   lisstoSecret.Spec.Repository,
+		Keys:         lisstoSecret.Spec.Keys,
+		CreatedAt:    lisstoSecret.CreationTimestamp.Format("2006-01-02T15:04:05Z07:00"),
+		KeyUpdatedAt: metadata.GetKeyTimestamps(lisstoSecret),
 	})
 }
 
