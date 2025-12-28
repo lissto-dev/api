@@ -151,9 +151,10 @@ func (h *Handler) CreateBlueprint(c echo.Context) error {
 
 	for _, bp := range blueprintList.Items {
 		if bp.Labels != nil && bp.Labels["hash"] == shortHash {
-			if bp.Namespace == namespace {
+			switch bp.Namespace {
+			case namespace:
 				targetNamespaceMatch = &bp
-			} else if bp.Namespace == globalNamespace {
+			case globalNamespace:
 				globalNamespaceMatch = &bp
 			}
 		}

@@ -32,7 +32,7 @@ func (c *Converter) ConvertToObjects(composeYAML string) ([]runtime.Object, erro
 	if err != nil {
 		return nil, fmt.Errorf("failed to write temp compose file: %w", err)
 	}
-	defer os.Remove(tmpFile)
+	defer func() { _ = os.Remove(tmpFile) }()
 
 	// 2. Load using Kompose loader
 	komposeLoader, loaderErr := loader.GetLoader("compose")
@@ -104,11 +104,11 @@ func (c *Converter) writeTempComposeFile(composeYAML string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("failed to create temp file: %w", err)
 	}
-	defer tmpFile.Close()
+	defer func() { _ = tmpFile.Close() }()
 
 	// Write compose content
 	if _, err := tmpFile.Write([]byte(composeYAML)); err != nil {
-		os.Remove(tmpFile.Name())
+		_ = os.Remove(tmpFile.Name())
 		return "", fmt.Errorf("failed to write temp file: %w", err)
 	}
 
