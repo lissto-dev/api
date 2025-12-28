@@ -14,4 +14,3 @@ func APIIDMiddleware(instanceID string) echo.MiddlewareFunc {
 		}
 	}
 }
-

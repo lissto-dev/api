@@ -27,5 +27,3 @@ func (c *Client) EnsureNamespace(ctx context.Context, name string) error {
 
 	return err // Real error
 }
-
-

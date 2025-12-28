@@ -1,8 +1,6 @@
 package postprocessor_test
 
 import (
-	"testing"
-
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	appsv1 "k8s.io/api/apps/v1"
@@ -10,17 +8,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 
-	"github.com/lissto-dev/api/pkg/logging"
 	"github.com/lissto-dev/api/pkg/postprocessor"
 )
-
-func TestCommandOverride(t *testing.T) {
-	// Initialize logger for tests
-	logging.InitLogger("info", "console")
-	
-	RegisterFailHandler(Fail)
-	RunSpecs(t, "CommandOverride Postprocessor Suite")
-}
 
 var _ = Describe("CommandOverrider", func() {
 	var (
@@ -45,7 +34,7 @@ var _ = Describe("CommandOverrider", func() {
 									{
 										Name:  "test-pod",
 										Image: "kubectl",
-										Args:  []string{"get", "pod/"},  // Broken by Kompose
+										Args:  []string{"get", "pod/"}, // Broken by Kompose
 									},
 								},
 							},
@@ -454,7 +443,7 @@ var _ = Describe("CommandOverrider", func() {
 
 				serviceLabelMap := map[string]map[string]string{
 					"web": {
-						"lissto.dev/command": "python    app.py    --debug",  // Multiple spaces
+						"lissto.dev/command": "python    app.py    --debug", // Multiple spaces
 					},
 				}
 
@@ -535,4 +524,3 @@ var _ = Describe("CommandOverrider", func() {
 		})
 	})
 })
-
