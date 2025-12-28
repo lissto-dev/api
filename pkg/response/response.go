@@ -65,4 +65,3 @@ func NotFound(c echo.Context, message string) error {
 func InternalServerError(c echo.Context, message string) error {
 	return Error(c, http.StatusInternalServerError, message)
 }
-

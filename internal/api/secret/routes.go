@@ -12,7 +12,3 @@ func RegisterRoutes(g *echo.Group, handler *Handler) {
 	g.PUT("/:id", handler.UpdateSecret)
 	g.DELETE("/:id", handler.DeleteSecret)
 }
-
-
-
-

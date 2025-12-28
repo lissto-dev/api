@@ -28,5 +28,3 @@ func NewImageCache() Cache {
 	logging.Logger.Info("Initialized in-memory image cache")
 	return NewMemoryCache()
 }
-
-

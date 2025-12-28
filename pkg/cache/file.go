@@ -239,5 +239,3 @@ func (fc *FileCache) save() error {
 func (fc *FileCache) Close() error {
 	return fc.save()
 }
-
-
