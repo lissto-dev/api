@@ -11,7 +11,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/kubernetes/kompose v1.37.0
 	github.com/labstack/echo/v4 v4.12.0
-	github.com/lissto-dev/controller v0.1.12
+	github.com/lissto-dev/controller v0.1.14-0.20251228015836-d28fdf16792a
 	github.com/onsi/ginkgo/v2 v2.27.2
 	github.com/onsi/gomega v1.38.2
 	github.com/stretchr/testify v1.11.1
