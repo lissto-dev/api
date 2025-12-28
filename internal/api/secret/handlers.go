@@ -248,7 +248,7 @@ func (h *Handler) GetSecrets(c echo.Context) error {
 	}
 
 	// Also list global secrets
-	globalNS := h.config.Namespaces.Global
+	globalNS := h.nsManager.GetGlobalNamespace()
 	globalList, err := h.k8sClient.ListLisstoSecrets(c.Request().Context(), globalNS)
 	if err != nil {
 		logging.Logger.Warn("Failed to list global secrets",
@@ -318,7 +318,7 @@ func (h *Handler) GetSecret(c echo.Context) error {
 		zap.String("namespace", namespace))
 
 	// Check if user can access this namespace
-	globalNS := h.config.Namespaces.Global
+	globalNS := h.nsManager.GetGlobalNamespace()
 	userNS := h.nsManager.GetDeveloperNamespace(user.Name)
 	if namespace != userNS && namespace != globalNS {
 		return c.String(403, "Cannot access secrets in other namespaces")

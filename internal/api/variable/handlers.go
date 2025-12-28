@@ -205,7 +205,7 @@ func (h *Handler) GetVariables(c echo.Context) error {
 	}
 
 	// Also list global variables if user has access
-	globalNS := h.config.Namespaces.Global
+	globalNS := h.nsManager.GetGlobalNamespace()
 	globalList, err := h.k8sClient.ListLisstoVariables(c.Request().Context(), globalNS)
 	if err != nil {
 		logging.Logger.Warn("Failed to list global variables",
@@ -276,7 +276,7 @@ func (h *Handler) GetVariable(c echo.Context) error {
 		zap.String("namespace", namespace))
 
 	// Check if user can access this namespace
-	globalNS := h.config.Namespaces.Global
+	globalNS := h.nsManager.GetGlobalNamespace()
 	userNS := h.nsManager.GetDeveloperNamespace(user.Name)
 	if namespace != userNS && namespace != globalNS {
 		return c.String(403, "Cannot access variables in other namespaces")
