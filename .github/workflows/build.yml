@@ -1,14 +1,15 @@
 name: Build and Push API
 
 on:
-  push:
+  workflow_run:
+    workflows: ["CI"]
+    types:
+      - completed
     branches:
       - main
+  push:
     tags:
       - 'v*'
-  pull_request:
-    branches:
-      - main
 
 env:
   REGISTRY: docker.io
@@ -16,7 +17,11 @@ env:
 
 jobs:
   build-and-push:
+    name: Build and Push Docker Image
     runs-on: ubuntu-latest
+    if: >
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
     permissions:
       contents: read
       packages: write
@@ -24,46 +29,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
         with:
-          go-version: '1.24'
-          cache: true
-          cache-dependency-path: go.sum
-
-      # Mint an installation token for a GitHub App installed on the target repo
-      - name: Get GitHub App token
-        id: app-token
-        uses: actions/create-github-app-token@v1
-        with:
-          app-id: ${{ secrets.APP_ID }}              # store in org secrets
-          private-key: ${{ secrets.APP_PRIVATE_KEY }}
-          owner: lissto-dev
-          repositories: controller-playground
-
-      - name: Configure Git credentials
-        env:
-          TOKEN: ${{ steps.app-token.outputs.token }}
-        run: |
-          git config --global credential.helper store
-          echo "https://x-access-token:${TOKEN}@github.com" > ~/.git-credentials
-          chmod 600 ~/.git-credentials
-
-      - name: Configure Git for private modules
-        run: |
-          git config --global url."https://github.com/lissto-dev/controller-playground".insteadOf "https://github.com/lissto-dev/controller"
-
-      - name: Set GOPRIVATE
-        run: echo "GOPRIVATE=github.com/lissto-dev/*" >> $GITHUB_ENV
-
-      - name: Download Go dependencies and update go.sum
-        run: |
-          go mod download
-          go mod tidy
-        env:
-          GOPRIVATE: github.com/lissto-dev/*
-          GOWORK: off
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.ref }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -77,48 +44,32 @@ jobs:
       - name: Extract metadata
         id: meta
         run: |
-          # Get short commit SHA
-          SHORT_SHA=$(git rev-parse --short HEAD)
-          echo "short_sha=$SHORT_SHA" >> $GITHUB_OUTPUT
-          
           # Determine if this is a tag build
           if [[ "${{ github.ref }}" == refs/tags/* ]]; then
             TAG_NAME=${GITHUB_REF#refs/tags/}
             echo "is_tag=true" >> $GITHUB_OUTPUT
             echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
-            
-            # Check if it's a stable release (vX.Y.Z format only, no suffix)
+
+            # Check if this is a stable tag (no pre-release suffix like -alpha, -beta, -rc)
             if [[ "$TAG_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-              echo "is_stable_release=true" >> $GITHUB_OUTPUT
-              echo "Detected stable release: $TAG_NAME"
+              echo "is_stable=true" >> $GITHUB_OUTPUT
             else
-              echo "is_stable_release=false" >> $GITHUB_OUTPUT
-              echo "Detected pre-release: $TAG_NAME"
+              echo "is_stable=false" >> $GITHUB_OUTPUT
             fi
           else
             echo "is_tag=false" >> $GITHUB_OUTPUT
-            echo "is_stable_release=false" >> $GITHUB_OUTPUT
-          fi
-          
-          # Determine if this is a main branch build
-          if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
-            echo "is_main=true" >> $GITHUB_OUTPUT
-          else
-            echo "is_main=false" >> $GITHUB_OUTPUT
+            echo "is_stable=false" >> $GITHUB_OUTPUT
           fi
 
       - name: Build and push Docker image
-        id: docker_build
         uses: docker/build-push-action@v5
         with:
           context: .
           platforms: linux/amd64,linux/arm64
-          push: ${{ github.event_name != 'pull_request' }}
-          build-args: |
-            GITHUB_TOKEN=${{ steps.app-token.outputs.token }}
+          push: true
           tags: |
-            ${{ steps.meta.outputs.is_tag == 'true' && format('{0}:{1}', env.IMAGE_NAME, steps.meta.outputs.tag_name) || format('{0}:{1}', env.IMAGE_NAME, steps.meta.outputs.short_sha) }}
-            ${{ steps.meta.outputs.is_stable_release == 'true' && format('{0}:latest', env.IMAGE_NAME) || '' }}
+            ${{ steps.meta.outputs.is_tag == 'true' && format('{0}:{1}', env.IMAGE_NAME, steps.meta.outputs.tag_name) || format('{0}:main', env.IMAGE_NAME) }}
+            ${{ steps.meta.outputs.is_stable == 'true' && format('{0}:latest', env.IMAGE_NAME) || '' }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -127,8 +78,8 @@ jobs:
           if [[ "${{ steps.meta.outputs.is_tag }}" == "true" ]]; then
             TAG="${{ steps.meta.outputs.tag_name }}"
           else
-            TAG="${{ steps.meta.outputs.short_sha }}"
+            TAG="main"
           fi
           echo "Image Tag: $TAG"
-          echo "Image Digest: ${{ steps.docker_build.outputs.digest }}"
+          echo "Is Stable Release: ${{ steps.meta.outputs.is_stable }}"
 
