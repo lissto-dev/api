@@ -24,6 +24,29 @@ type Handler struct {
 	config     *operatorConfig.Config
 }
 
+// FormattableEnv wraps a k8s Env to implement common.Formattable
+type FormattableEnv struct {
+	k8sObj    *envv1alpha1.Env
+	nsManager *authz.NamespaceManager
+}
+
+func (f *FormattableEnv) ToDetailed() (common.DetailedResponse, error) {
+	return common.NewDetailedResponse(f.k8sObj.ObjectMeta, f.k8sObj.Spec, f.nsManager)
+}
+
+func (f *FormattableEnv) ToStandard() interface{} {
+	return extractEnvResponse(f.k8sObj)
+}
+
+// extractEnvResponse extracts standard data from env
+func extractEnvResponse(env *envv1alpha1.Env) common.EnvResponse {
+	identifier := common.GenerateScopedIdentifier(env.Namespace, env.Name)
+	return common.EnvResponse{
+		ID:   identifier,
+		Name: env.Name,
+	}
+}
+
 // NewHandler creates a new env handler
 func NewHandler(
 	k8sClient *k8s.Client,
@@ -187,10 +210,8 @@ func (h *Handler) GetEnv(c echo.Context) error {
 		return c.String(404, fmt.Sprintf("Environment '%s' not found", envName))
 	}
 
-	// Convert to response format
-	identifier := common.GenerateScopedIdentifier(env.Namespace, env.Name)
-	return c.JSON(200, common.EnvResponse{
-		ID:   identifier,
-		Name: env.Name,
+	return common.HandleFormatResponse(c, &FormattableEnv{
+		k8sObj:    env,
+		nsManager: h.nsManager,
 	})
 }

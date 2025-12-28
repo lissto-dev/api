@@ -47,6 +47,81 @@ func ParseBlueprintReference(blueprintRef string) (namespace, name string, err e
 	return namespace, name, nil
 }
 
+// ParseScopedReference parses a scoped reference and returns namespace, name
+// Falls back to empty namespace for legacy format (name only)
+// This is a convenience wrapper around ParseBlueprintReference that returns empty namespace on error
+func ParseScopedReference(idParam string) (namespace, name string) {
+	ns, n, err := ParseBlueprintReference(idParam)
+	if err != nil {
+		// Legacy format: just name
+		return "", idParam
+	}
+	return ns, n
+}
+
+// ResolveNamespaceFromID parses a scoped ID and validates against allowed namespaces
+// Returns:
+//   - targetNamespace: the specific namespace to search (if scoped ID and allowed)
+//   - name: the resource name
+//   - searchAllowed: true if should search all allowed namespaces (legacy behavior)
+//
+// This centralizes the logic for handling both scoped IDs and legacy format
+func ResolveNamespaceFromID(idParam string, allowedNamespaces []string) (targetNamespace, name string, searchAllowed bool) {
+	// Parse the ID (could be scoped like "daniel/ID" or legacy format "ID")
+	parsedNS, parsedName := ParseScopedReference(idParam)
+
+	// If scoped reference, check if user can access that namespace
+	if parsedNS != "" {
+		if IsNamespaceAllowed(parsedNS, allowedNamespaces) {
+			// User can access this specific namespace
+			return parsedNS, parsedName, false
+		}
+		// User cannot access this namespace - return empty to trigger 404
+		return "", parsedName, false
+	}
+
+	// Legacy format: search all allowed namespaces
+	return "", parsedName, true
+}
+
+// ResolveNamespacesToSearch determines which namespaces to search for a resource
+// Returns an ordered list of namespaces to try (user namespace first, then global if allowed)
+func ResolveNamespacesToSearch(targetNS, userNS, globalNS string, searchAll bool, allowedNS []string) []string {
+	// Scoped ID: search only that specific namespace
+	if targetNS != "" {
+		return []string{targetNS}
+	}
+
+	// Not authorized for scoped namespace
+	if !searchAll {
+		return []string{}
+	}
+
+	// Legacy ID: try user namespace first
+	namespaces := []string{userNS}
+
+	// Add global if allowed (for read operations)
+	if IsNamespaceAllowed(globalNS, allowedNS) {
+		namespaces = append(namespaces, globalNS)
+	}
+
+	return namespaces
+}
+
+// IsNamespaceAllowed checks if a namespace is in the allowed list
+// Supports wildcard "*" which allows all namespaces
+func IsNamespaceAllowed(namespace string, allowedNamespaces []string) bool {
+	if len(allowedNamespaces) > 0 && allowedNamespaces[0] == "*" {
+		return true
+	}
+	for _, allowed := range allowedNamespaces {
+		if allowed == namespace {
+			return true
+		}
+	}
+	return false
+}
+
 // ImageCandidate represents a single image candidate that was tried
 type ImageCandidate struct {
 	ImageURL string `json:"image_url"`        // Full image URL that was tried
