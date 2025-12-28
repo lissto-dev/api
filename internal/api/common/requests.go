@@ -101,7 +101,7 @@ func sanitizeForName(input string) string {
 // generateRandomSuffix creates a random short string for naming
 func generateRandomSuffix() string {
 	bytes := make([]byte, 4)
-	rand.Read(bytes)
+	_, _ = rand.Read(bytes)
 	return hex.EncodeToString(bytes)
 }
 

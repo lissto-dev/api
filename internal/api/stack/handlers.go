@@ -99,8 +99,8 @@ func (h *Handler) CreateStack(c echo.Context) error {
 		zap.String("env", req.Env),
 		zap.String("request_id", req.RequestID))
 
-	// Determine target namespace from blueprint (for reading the blueprint)
-	blueprintNamespace, _, err := common.ParseBlueprintReference(req.Blueprint)
+	// Validate blueprint reference format
+	_, _, err := common.ParseBlueprintReference(req.Blueprint)
 	if err != nil {
 		logging.Logger.Error("Failed to parse blueprint reference",
 			zap.String("blueprint", req.Blueprint),

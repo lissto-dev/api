@@ -135,7 +135,7 @@ func (iec *ImageExistenceChecker) checkImageWithContainersImage(ctx context.Cont
 			zap.Error(err))
 		return &ImageMetadata{Exists: false}, nil
 	}
-	defer source.Close()
+	defer func() { _ = source.Close() }()
 
 	// Get the image manifest
 	manifestBytes, manifestType, err := source.GetManifest(ctx, nil)
@@ -188,7 +188,7 @@ func (iec *ImageExistenceChecker) checkImageWithContainersImage(ctx context.Cont
 		// For other errors, treat as image not found
 		return &ImageMetadata{Exists: false}, nil
 	}
-	defer img.Close()
+	defer func() { _ = img.Close() }()
 
 	// Success! Get the config blob and digest
 	configBlob, err := img.ConfigBlob(ctx)
@@ -377,7 +377,7 @@ func (iec *ImageExistenceChecker) handleManifestList(ctx context.Context, source
 			zap.Error(err))
 		return &ImageMetadata{Exists: false}, nil
 	}
-	defer img.Close()
+	defer func() { _ = img.Close() }()
 
 	// Get config blob and digest
 	configBlob, err := img.ConfigBlob(ctx)
@@ -425,7 +425,7 @@ func (iec *ImageExistenceChecker) GetAvailablePlatforms(imageURL string) ([]stri
 	if err != nil {
 		return nil, fmt.Errorf("failed to create image source: %w", err)
 	}
-	defer source.Close()
+	defer func() { _ = source.Close() }()
 
 	// Get the image manifest
 	_, manifestType, err := source.GetManifest(ctx, nil)
@@ -454,13 +454,4 @@ func (iec *ImageExistenceChecker) GetDigestForPlatform(imageURL, os, arch string
 		return "", fmt.Errorf("image not found for platform %s/%s", os, arch)
 	}
 	return metadata.Digest, nil
-}
-
-// Helper function to get map keys
-func getKeys(m map[string]string) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	return keys
 }
