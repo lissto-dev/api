@@ -37,6 +37,38 @@ type Handler struct {
 	cache              cache.Cache
 }
 
+// StackResponse represents standard stack data
+type StackResponse struct {
+	Name               string `json:"name"`
+	Namespace          string `json:"namespace"`
+	BlueprintReference string `json:"blueprintReference"`
+	EnvReference       string `json:"envReference"`
+}
+
+// FormattableStack wraps a k8s Stack to implement common.Formattable
+type FormattableStack struct {
+	k8sObj    *envv1alpha1.Stack
+	nsManager *authz.NamespaceManager
+}
+
+func (f *FormattableStack) ToDetailed() (common.DetailedResponse, error) {
+	return common.NewDetailedResponse(f.k8sObj.ObjectMeta, f.k8sObj.Spec, f.nsManager)
+}
+
+func (f *FormattableStack) ToStandard() interface{} {
+	return extractStackResponse(f.k8sObj)
+}
+
+// extractStackResponse extracts standard data from stack
+func extractStackResponse(stack *envv1alpha1.Stack) StackResponse {
+	return StackResponse{
+		Name:               stack.Name,
+		Namespace:          stack.Namespace,
+		BlueprintReference: stack.Spec.BlueprintReference,
+		EnvReference:       stack.Spec.Env,
+	}
+}
+
 // NewHandler creates a new stack handler
 func NewHandler(
 	k8sClient *k8s.Client,
@@ -419,145 +451,121 @@ func (h *Handler) GetStacks(c echo.Context) error {
 
 // GetStack handles GET /stacks/:id
 func (h *Handler) GetStack(c echo.Context) error {
-	name := c.Param("id")
+	idParam := c.Param("id")
 	user, _ := middleware.GetUserFromContext(c)
 
-	// Get allowed namespaces
-	allowedNS := h.authorizer.GetAllowedNamespaces(
-		user.Role,
-		authz.ActionRead,
-		authz.ResourceStack,
-		user.Name,
-	)
-
+	// Get allowed namespaces for authorization
+	allowedNS := h.authorizer.GetAllowedNamespaces(user.Role, authz.ActionRead, authz.ResourceStack, user.Name)
 	if len(allowedNS) == 0 {
 		return c.String(403, "Permission denied: no accessible namespaces")
 	}
 
-	// Try to find in allowed namespaces
-	if allowedNS[0] == "*" {
-		// Admin: search in all namespaces (no query param needed)
-		// First try global namespace
-		stack, err := h.k8sClient.GetStack(c.Request().Context(), h.nsManager.GetGlobalNamespace(), name)
-		if err == nil {
-			identifier := common.GenerateScopedIdentifier(stack.Namespace, stack.Name)
-			return c.String(200, identifier)
-		}
+	// Resolve namespace from ID
+	targetNamespace, name, searchAll := common.ResolveNamespaceFromID(idParam, allowedNS)
 
-		// If not found in global, search all developer namespaces
-		// This is a simplified approach - in production you might want to list all namespaces
-		return c.String(404, fmt.Sprintf("Stack '%s' not found in any accessible namespace", name))
+	// Try to find the stack
+	userNS := h.nsManager.GetDeveloperNamespace(user.Name)
+	globalNS := h.nsManager.GetGlobalNamespace()
+	stack, found := h.findStack(c, targetNamespace, name, searchAll, userNS, globalNS, allowedNS)
+	if !found {
+		return c.String(404, fmt.Sprintf("Stack '%s' not found", idParam))
 	}
 
-	// Try each allowed namespace
-	for _, ns := range allowedNS {
-		stack, err := h.k8sClient.GetStack(c.Request().Context(), ns, name)
-		if err == nil {
-			identifier := common.GenerateScopedIdentifier(stack.Namespace, stack.Name)
-			return c.String(200, identifier)
+	return common.HandleFormatResponse(c, &FormattableStack{k8sObj: stack, nsManager: h.nsManager})
+}
+
+// findStack searches for a stack in the appropriate namespace(s)
+func (h *Handler) findStack(c echo.Context, targetNS, name string, searchAll bool, userNS, globalNS string, allowedNS []string) (*envv1alpha1.Stack, bool) {
+	ctx := c.Request().Context()
+
+	// Get ordered list of namespaces to search
+	namespaces := common.ResolveNamespacesToSearch(targetNS, userNS, globalNS, searchAll, allowedNS)
+
+	// Try each namespace in order
+	for _, ns := range namespaces {
+		if stack, err := h.k8sClient.GetStack(ctx, ns, name); err == nil {
+			return stack, true
 		}
 	}
 
-	return c.String(404, fmt.Sprintf("Stack '%s' not found in your namespace", name))
+	return nil, false
 }
 
 // DeleteStack handles DELETE /stacks/:id
 func (h *Handler) DeleteStack(c echo.Context) error {
-	name := c.Param("id")
+	idParam := c.Param("id")
 	user, _ := middleware.GetUserFromContext(c)
 
-	// Get allowed namespaces
-	allowedNS := h.authorizer.GetAllowedNamespaces(
-		user.Role,
-		authz.ActionDelete,
-		authz.ResourceStack,
-		user.Name,
-	)
-
+	// Get allowed namespaces for authorization
+	allowedNS := h.authorizer.GetAllowedNamespaces(user.Role, authz.ActionDelete, authz.ResourceStack, user.Name)
 	if len(allowedNS) == 0 {
 		return c.String(403, "Permission denied: no accessible namespaces")
 	}
 
-	// Try to find and delete in allowed namespaces
-	if allowedNS[0] == "*" {
-		// Admin: search in all namespaces (no query param needed)
-		// First try global namespace
-		if err := h.k8sClient.DeleteStack(c.Request().Context(), h.nsManager.GetGlobalNamespace(), name); err == nil {
-			return c.NoContent(204)
-		}
+	// Resolve namespace from ID
+	targetNamespace, name, searchAll := common.ResolveNamespaceFromID(idParam, allowedNS)
 
-		// If not found in global, search all developer namespaces
-		// This is a simplified approach - in production you might want to list all namespaces
-		return c.String(404, fmt.Sprintf("Stack '%s' not found in any accessible namespace", name))
+	// Try to delete the stack
+	userNS := h.nsManager.GetDeveloperNamespace(user.Name)
+	globalNS := h.nsManager.GetGlobalNamespace()
+	if h.deleteStack(c, targetNamespace, name, searchAll, userNS, globalNS, allowedNS) {
+		return c.NoContent(204)
 	}
 
-	// Try each allowed namespace
-	for _, ns := range allowedNS {
-		if err := h.k8sClient.DeleteStack(c.Request().Context(), ns, name); err == nil {
-			return c.NoContent(204)
+	return c.String(404, fmt.Sprintf("Stack '%s' not found", idParam))
+}
+
+// deleteStack searches for and deletes a stack in the appropriate namespace(s)
+func (h *Handler) deleteStack(c echo.Context, targetNS, name string, searchAll bool, userNS, globalNS string, allowedNS []string) bool {
+	ctx := c.Request().Context()
+
+	// Get ordered list of namespaces to search
+	namespaces := common.ResolveNamespacesToSearch(targetNS, userNS, globalNS, searchAll, allowedNS)
+
+	// Try to delete from each namespace in order
+	for _, ns := range namespaces {
+		if h.k8sClient.DeleteStack(ctx, ns, name) == nil {
+			return true
 		}
 	}
 
-	return c.String(404, fmt.Sprintf("Stack '%s' not found in your namespace", name))
+	return false
 }
 
 // UpdateStack handles PUT /stacks/:id
 func (h *Handler) UpdateStack(c echo.Context) error {
-	name := c.Param("id")
+	idParam := c.Param("id")
 	user, _ := middleware.GetUserFromContext(c)
 
-	// Parse request body - accept both image info and simple strings
+	// Parse request body
 	var req struct {
 		Images map[string]interface{} `json:"images"`
 	}
 	if err := c.Bind(&req); err != nil {
 		return c.String(400, "Invalid request body")
 	}
-
 	if len(req.Images) == 0 {
 		return c.String(400, "No images provided")
 	}
 
 	// Get allowed namespaces for update
-	allowedNS := h.authorizer.GetAllowedNamespaces(
-		user.Role,
-		authz.ActionUpdate,
-		authz.ResourceStack,
-		user.Name,
-	)
-
+	allowedNS := h.authorizer.GetAllowedNamespaces(user.Role, authz.ActionUpdate, authz.ResourceStack, user.Name)
 	if len(allowedNS) == 0 {
 		return c.String(403, "Permission denied: no accessible namespaces")
 	}
 
-	// Try to find and update in allowed namespaces
-	if allowedNS[0] == "*" {
-		// Admin: search in all namespaces
-		// First try global namespace
-		stack, err := h.k8sClient.GetStack(c.Request().Context(), h.nsManager.GetGlobalNamespace(), name)
-		if err == nil {
-			return h.updateStackImages(c, stack, req.Images, user.Name)
-		}
+	// Resolve namespace from ID
+	targetNamespace, name, searchAll := common.ResolveNamespaceFromID(idParam, allowedNS)
 
-		// If not found in global, try developer namespace
-		userNamespace := h.nsManager.GetDeveloperNamespace(user.Name)
-		stack, err = h.k8sClient.GetStack(c.Request().Context(), userNamespace, name)
-		if err == nil {
-			return h.updateStackImages(c, stack, req.Images, user.Name)
-		}
-
-		return c.String(404, fmt.Sprintf("Stack '%s' not found in any accessible namespace", name))
+	// Try to find the stack
+	userNS := h.nsManager.GetDeveloperNamespace(user.Name)
+	globalNS := h.nsManager.GetGlobalNamespace()
+	stack, found := h.findStack(c, targetNamespace, name, searchAll, userNS, globalNS, allowedNS)
+	if !found {
+		return c.String(404, fmt.Sprintf("Stack '%s' not found", idParam))
 	}
 
-	// Try each allowed namespace
-	for _, ns := range allowedNS {
-		stack, err := h.k8sClient.GetStack(c.Request().Context(), ns, name)
-		if err == nil {
-			return h.updateStackImages(c, stack, req.Images, user.Name)
-		}
-	}
-
-	return c.String(404, fmt.Sprintf("Stack '%s' not found in your namespace", name))
+	return h.updateStackImages(c, stack, req.Images, user.Name)
 }
 
 // updateStackImages is a helper to update stack images
