@@ -13,6 +13,7 @@ import (
 	"github.com/lissto-dev/api/pkg/k8s"
 	"github.com/lissto-dev/api/pkg/logging"
 	envv1alpha1 "github.com/lissto-dev/controller/api/v1alpha1"
+	controllerconfig "github.com/lissto-dev/controller/pkg/config"
 	operatorConfig "github.com/lissto-dev/controller/pkg/config"
 	"go.uber.org/zap"
 )
@@ -225,7 +226,9 @@ func (h *Handler) CreateBlueprint(c echo.Context) error {
 		annotations["lissto.dev/title"] = metadata.Title
 	}
 	if req.Repository != "" {
-		annotations["lissto.dev/repository"] = req.Repository
+		// Normalize repository URL before storing for consistent comparison
+		normalizedRepo := controllerconfig.NormalizeRepositoryURL(req.Repository)
+		annotations["lissto.dev/repository"] = normalizedRepo
 	}
 	annotations["lissto.dev/services"] = servicesJSON
 
@@ -264,6 +267,20 @@ type BlueprintResponse struct {
 	ID      string                  `json:"id"`
 	Title   string                  `json:"title"`
 	Content compose.ServiceMetadata `json:"content"`
+}
+
+// FormattableBlueprint wraps a k8s Blueprint to implement common.Formattable
+type FormattableBlueprint struct {
+	K8sObj    *envv1alpha1.Blueprint
+	NsManager *authz.NamespaceManager
+}
+
+func (f *FormattableBlueprint) ToDetailed() (common.DetailedResponse, error) {
+	return common.NewDetailedResponse(f.K8sObj.ObjectMeta, f.K8sObj.Spec, f.NsManager)
+}
+
+func (f *FormattableBlueprint) ToStandard() interface{} {
+	return extractBlueprintResponse(f.K8sObj)
 }
 
 // extractBlueprintResponse extracts enriched data from blueprint annotations
@@ -344,82 +361,83 @@ func (h *Handler) GetBlueprints(c echo.Context) error {
 
 // GetBlueprint handles GET /blueprints/:id
 func (h *Handler) GetBlueprint(c echo.Context) error {
-	name := c.Param("id")
+	idParam := c.Param("id")
 	user, _ := middleware.GetUserFromContext(c)
 
-	// Get allowed namespaces
-	allowedNS := h.authorizer.GetAllowedNamespaces(
-		user.Role,
-		authz.ActionRead,
-		authz.ResourceBlueprint,
-		user.Name,
-	)
-
+	// Get allowed namespaces for authorization
+	allowedNS := h.authorizer.GetAllowedNamespaces(user.Role, authz.ActionRead, authz.ResourceBlueprint, user.Name)
 	if len(allowedNS) == 0 {
 		return c.String(403, "Permission denied: no accessible namespaces")
 	}
 
-	// Try to find in allowed namespaces
-	if allowedNS[0] == "*" {
-		// Admin: search in all namespaces (no query param needed)
-		// First try global namespace
-		blueprint, err := h.k8sClient.GetBlueprint(c.Request().Context(), h.nsManager.GetGlobalNamespace(), name)
-		if err == nil {
-			return c.JSON(200, extractBlueprintResponse(blueprint))
-		}
+	// Resolve namespace from ID
+	targetNamespace, name, searchAll := common.ResolveNamespaceFromID(idParam, allowedNS)
 
-		// If not found in global, search all developer namespaces
-		// This is a simplified approach - in production you might want to list all namespaces
-		return c.String(404, fmt.Sprintf("Blueprint '%s' not found in any accessible namespace", name))
+	// Try to find the blueprint
+	userNS := h.nsManager.GetDeveloperNamespace(user.Name)
+	globalNS := h.nsManager.GetGlobalNamespace()
+	blueprint, found := h.findBlueprint(c, targetNamespace, name, searchAll, userNS, globalNS, allowedNS)
+	if !found {
+		return c.String(404, fmt.Sprintf("Blueprint '%s' not found", idParam))
 	}
 
-	// Try each allowed namespace
-	for _, ns := range allowedNS {
-		blueprint, err := h.k8sClient.GetBlueprint(c.Request().Context(), ns, name)
-		if err == nil {
-			return c.JSON(200, extractBlueprintResponse(blueprint))
+	return common.HandleFormatResponse(c, &FormattableBlueprint{K8sObj: blueprint, NsManager: h.nsManager})
+}
+
+// findBlueprint searches for a blueprint in the appropriate namespace(s)
+func (h *Handler) findBlueprint(c echo.Context, targetNS, name string, searchAll bool, userNS, globalNS string, allowedNS []string) (*envv1alpha1.Blueprint, bool) {
+	ctx := c.Request().Context()
+
+	// Get ordered list of namespaces to search
+	namespaces := common.ResolveNamespacesToSearch(targetNS, userNS, globalNS, searchAll, allowedNS)
+
+	// Try each namespace in order
+	for _, ns := range namespaces {
+		if bp, err := h.k8sClient.GetBlueprint(ctx, ns, name); err == nil {
+			return bp, true
 		}
 	}
 
-	return c.String(404, fmt.Sprintf("Blueprint '%s' not found in your namespace", name))
+	return nil, false
 }
 
 // DeleteBlueprint handles DELETE /blueprints/:id
 func (h *Handler) DeleteBlueprint(c echo.Context) error {
-	name := c.Param("id")
+	idParam := c.Param("id")
 	user, _ := middleware.GetUserFromContext(c)
 
-	// Get allowed namespaces
-	allowedNS := h.authorizer.GetAllowedNamespaces(
-		user.Role,
-		authz.ActionDelete,
-		authz.ResourceBlueprint,
-		user.Name,
-	)
-
+	// Get allowed namespaces for authorization
+	allowedNS := h.authorizer.GetAllowedNamespaces(user.Role, authz.ActionDelete, authz.ResourceBlueprint, user.Name)
 	if len(allowedNS) == 0 {
 		return c.String(403, "Permission denied: no accessible namespaces")
 	}
 
-	// Try to find and delete in allowed namespaces
-	if allowedNS[0] == "*" {
-		// Admin: search in all namespaces (no query param needed)
-		// First try global namespace
-		if err := h.k8sClient.DeleteBlueprint(c.Request().Context(), h.nsManager.GetGlobalNamespace(), name); err == nil {
-			return c.NoContent(204)
-		}
+	// Resolve namespace from ID
+	targetNamespace, name, searchAll := common.ResolveNamespaceFromID(idParam, allowedNS)
 
-		// If not found in global, search all developer namespaces
-		// This is a simplified approach - in production you might want to list all namespaces
-		return c.String(404, fmt.Sprintf("Blueprint '%s' not found in any accessible namespace", name))
+	// Try to delete the blueprint
+	userNS := h.nsManager.GetDeveloperNamespace(user.Name)
+	globalNS := h.nsManager.GetGlobalNamespace()
+	if h.deleteBlueprint(c, targetNamespace, name, searchAll, userNS, globalNS, allowedNS) {
+		return c.NoContent(204)
 	}
 
-	// Try each allowed namespace
-	for _, ns := range allowedNS {
-		if err := h.k8sClient.DeleteBlueprint(c.Request().Context(), ns, name); err == nil {
-			return c.NoContent(204)
+	return c.String(404, fmt.Sprintf("Blueprint '%s' not found", idParam))
+}
+
+// deleteBlueprint searches for and deletes a blueprint in the appropriate namespace(s)
+func (h *Handler) deleteBlueprint(c echo.Context, targetNS, name string, searchAll bool, userNS, globalNS string, allowedNS []string) bool {
+	ctx := c.Request().Context()
+
+	// Get ordered list of namespaces to search
+	namespaces := common.ResolveNamespacesToSearch(targetNS, userNS, globalNS, searchAll, allowedNS)
+
+	// Try to delete from each namespace in order
+	for _, ns := range namespaces {
+		if h.k8sClient.DeleteBlueprint(ctx, ns, name) == nil {
+			return true
 		}
 	}
 
-	return c.String(404, fmt.Sprintf("Blueprint '%s' not found in your namespace", name))
+	return false
 }

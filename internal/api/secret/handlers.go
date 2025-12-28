@@ -7,6 +7,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	"github.com/lissto-dev/api/internal/api/common"
 	"github.com/lissto-dev/api/internal/middleware"
 	"github.com/lissto-dev/api/pkg/authz"
 	"github.com/lissto-dev/api/pkg/k8s"
@@ -65,6 +66,34 @@ type SecretResponse struct {
 	Keys         []string         `json:"keys"` // Only key names, never values
 	CreatedAt    string           `json:"created_at,omitempty"`
 	KeyUpdatedAt map[string]int64 `json:"key_updated_at,omitempty"` // Unix timestamps per key
+}
+
+// FormattableSecret wraps a k8s LisstoSecret to implement common.Formattable
+type FormattableSecret struct {
+	k8sObj    *envv1alpha1.LisstoSecret
+	nsManager *authz.NamespaceManager
+}
+
+func (f *FormattableSecret) ToDetailed() (common.DetailedResponse, error) {
+	return common.NewDetailedResponse(f.k8sObj.ObjectMeta, f.k8sObj.Spec, f.nsManager)
+}
+
+func (f *FormattableSecret) ToStandard() interface{} {
+	return extractSecretResponse(f.k8sObj)
+}
+
+// extractSecretResponse extracts standard data from secret (keys only, never values)
+func extractSecretResponse(lisstoSecret *envv1alpha1.LisstoSecret) SecretResponse {
+	return SecretResponse{
+		ID:           fmt.Sprintf("%s/%s", lisstoSecret.Namespace, lisstoSecret.Name),
+		Name:         lisstoSecret.Name,
+		Scope:        lisstoSecret.GetScope(),
+		Env:          lisstoSecret.Spec.Env,
+		Repository:   lisstoSecret.Spec.Repository,
+		Keys:         lisstoSecret.Spec.Keys,
+		CreatedAt:    lisstoSecret.CreationTimestamp.Format("2006-01-02T15:04:05Z07:00"),
+		KeyUpdatedAt: metadata.GetKeyTimestamps(lisstoSecret),
+	}
 }
 
 // CreateSecret handles POST /secrets
@@ -334,15 +363,9 @@ func (h *Handler) GetSecret(c echo.Context) error {
 	}
 
 	// Return keys only, no values (write-only)
-	return c.JSON(200, SecretResponse{
-		ID:           fmt.Sprintf("%s/%s", lisstoSecret.Namespace, lisstoSecret.Name),
-		Name:         lisstoSecret.Name,
-		Scope:        lisstoSecret.GetScope(),
-		Env:          lisstoSecret.Spec.Env,
-		Repository:   lisstoSecret.Spec.Repository,
-		Keys:         lisstoSecret.Spec.Keys,
-		CreatedAt:    lisstoSecret.CreationTimestamp.Format("2006-01-02T15:04:05Z07:00"),
-		KeyUpdatedAt: metadata.GetKeyTimestamps(lisstoSecret),
+	return common.HandleFormatResponse(c, &FormattableSecret{
+		k8sObj:    lisstoSecret,
+		nsManager: h.nsManager,
 	})
 }
 
