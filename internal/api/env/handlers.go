@@ -12,7 +12,7 @@ import (
 	"github.com/lissto-dev/api/pkg/k8s"
 	"github.com/lissto-dev/api/pkg/logging"
 	envv1alpha1 "github.com/lissto-dev/controller/api/v1alpha1"
-	operatorConfig "github.com/lissto-dev/controller/pkg/config"
+	controllerconfig "github.com/lissto-dev/controller/pkg/config"
 	"go.uber.org/zap"
 )
 
@@ -21,7 +21,30 @@ type Handler struct {
 	k8sClient  *k8s.Client
 	authorizer *authz.Authorizer
 	nsManager  *authz.NamespaceManager
-	config     *operatorConfig.Config
+	config     *controllerconfig.Config
+}
+
+// FormattableEnv wraps a k8s Env to implement common.Formattable
+type FormattableEnv struct {
+	k8sObj    *envv1alpha1.Env
+	nsManager *authz.NamespaceManager
+}
+
+func (f *FormattableEnv) ToDetailed() (common.DetailedResponse, error) {
+	return common.NewDetailedResponse(f.k8sObj.ObjectMeta, f.k8sObj.Spec, f.nsManager)
+}
+
+func (f *FormattableEnv) ToStandard() interface{} {
+	return extractEnvResponse(f.k8sObj, f.nsManager)
+}
+
+// extractEnvResponse extracts standard data from env
+func extractEnvResponse(env *envv1alpha1.Env, nsManager *authz.NamespaceManager) common.EnvResponse {
+	identifier := nsManager.MustGenerateScopedID(env.Namespace, env.Name)
+	return common.EnvResponse{
+		ID:   identifier,
+		Name: env.Name,
+	}
 }
 
 // NewHandler creates a new env handler
@@ -29,7 +52,7 @@ func NewHandler(
 	k8sClient *k8s.Client,
 	authorizer *authz.Authorizer,
 	nsManager *authz.NamespaceManager,
-	config *operatorConfig.Config,
+	config *controllerconfig.Config,
 ) *Handler {
 	return &Handler{
 		k8sClient:  k8sClient,
@@ -111,7 +134,7 @@ func (h *Handler) CreateEnv(c echo.Context) error {
 		zap.String("user", user.Name))
 
 	// Return scoped identifier
-	identifier := common.GenerateScopedIdentifier(namespace, req.Name)
+	identifier := h.nsManager.MustGenerateScopedID(namespace, req.Name)
 	return c.String(201, identifier)
 }
 
@@ -145,7 +168,7 @@ func (h *Handler) GetEnvs(c echo.Context) error {
 	// Convert to response format
 	var envs []common.EnvResponse
 	for _, env := range envList.Items {
-		identifier := common.GenerateScopedIdentifier(env.Namespace, env.Name)
+		identifier := h.nsManager.MustGenerateScopedID(env.Namespace, env.Name)
 		envs = append(envs, common.EnvResponse{
 			ID:   identifier,
 			Name: env.Name,
@@ -187,10 +210,8 @@ func (h *Handler) GetEnv(c echo.Context) error {
 		return c.String(404, fmt.Sprintf("Environment '%s' not found", envName))
 	}
 
-	// Convert to response format
-	identifier := common.GenerateScopedIdentifier(env.Namespace, env.Name)
-	return c.JSON(200, common.EnvResponse{
-		ID:   identifier,
-		Name: env.Name,
+	return common.HandleFormatResponse(c, &FormattableEnv{
+		k8sObj:    env,
+		nsManager: h.nsManager,
 	})
 }

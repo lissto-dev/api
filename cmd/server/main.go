@@ -18,7 +18,7 @@ import (
 	"github.com/lissto-dev/api/pkg/k8s"
 	"github.com/lissto-dev/api/pkg/logging"
 	pkgServer "github.com/lissto-dev/api/pkg/server"
-	operatorConfig "github.com/lissto-dev/controller/pkg/config"
+	controllerconfig "github.com/lissto-dev/controller/pkg/config"
 )
 
 // CustomValidator wraps the validator
@@ -43,7 +43,7 @@ func main() {
 	flag.Parse()
 
 	// Load shared operator configuration
-	cfg, err := operatorConfig.LoadConfig(configPath)
+	cfg, err := controllerconfig.LoadConfig(configPath)
 	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)
 	}

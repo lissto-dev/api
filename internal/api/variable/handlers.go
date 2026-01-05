@@ -6,13 +6,14 @@ import (
 	"github.com/labstack/echo/v4"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	"github.com/lissto-dev/api/internal/api/common"
 	"github.com/lissto-dev/api/internal/middleware"
 	"github.com/lissto-dev/api/pkg/authz"
 	"github.com/lissto-dev/api/pkg/k8s"
 	"github.com/lissto-dev/api/pkg/logging"
 	"github.com/lissto-dev/api/pkg/metadata"
 	envv1alpha1 "github.com/lissto-dev/controller/api/v1alpha1"
-	operatorConfig "github.com/lissto-dev/controller/pkg/config"
+	controllerconfig "github.com/lissto-dev/controller/pkg/config"
 	"go.uber.org/zap"
 )
 
@@ -21,7 +22,7 @@ type Handler struct {
 	k8sClient  *k8s.Client
 	authorizer *authz.Authorizer
 	nsManager  *authz.NamespaceManager
-	config     *operatorConfig.Config
+	config     *controllerconfig.Config
 }
 
 // NewHandler creates a new variable handler
@@ -29,7 +30,7 @@ func NewHandler(
 	k8sClient *k8s.Client,
 	authorizer *authz.Authorizer,
 	nsManager *authz.NamespaceManager,
-	config *operatorConfig.Config,
+	config *controllerconfig.Config,
 ) *Handler {
 	return &Handler{
 		k8sClient:  k8sClient,
@@ -63,6 +64,34 @@ type VariableResponse struct {
 	Data         map[string]string `json:"data"`
 	CreatedAt    string            `json:"created_at,omitempty"`
 	KeyUpdatedAt map[string]int64  `json:"key_updated_at,omitempty"` // Unix timestamps per key
+}
+
+// FormattableVariable wraps a k8s LisstoVariable to implement common.Formattable
+type FormattableVariable struct {
+	k8sObj    *envv1alpha1.LisstoVariable
+	nsManager *authz.NamespaceManager
+}
+
+func (f *FormattableVariable) ToDetailed() (common.DetailedResponse, error) {
+	return common.NewDetailedResponse(f.k8sObj.ObjectMeta, f.k8sObj.Spec, f.nsManager)
+}
+
+func (f *FormattableVariable) ToStandard() interface{} {
+	return extractVariableResponse(f.k8sObj)
+}
+
+// extractVariableResponse extracts standard data from variable
+func extractVariableResponse(variable *envv1alpha1.LisstoVariable) VariableResponse {
+	return VariableResponse{
+		ID:           fmt.Sprintf("%s/%s", variable.Namespace, variable.Name),
+		Name:         variable.Name,
+		Scope:        variable.GetScope(),
+		Env:          variable.Spec.Env,
+		Repository:   variable.Spec.Repository,
+		Data:         variable.Spec.Data,
+		CreatedAt:    variable.CreationTimestamp.Format("2006-01-02T15:04:05Z07:00"),
+		KeyUpdatedAt: metadata.GetKeyTimestamps(variable),
+	}
 }
 
 // CreateVariable handles POST /variables
@@ -291,15 +320,9 @@ func (h *Handler) GetVariable(c echo.Context) error {
 		return c.String(404, fmt.Sprintf("Variable '%s' not found", name))
 	}
 
-	return c.JSON(200, VariableResponse{
-		ID:           fmt.Sprintf("%s/%s", variable.Namespace, variable.Name),
-		Name:         variable.Name,
-		Scope:        variable.GetScope(),
-		Env:          variable.Spec.Env,
-		Repository:   variable.Spec.Repository,
-		Data:         variable.Spec.Data,
-		CreatedAt:    variable.CreationTimestamp.Format("2006-01-02T15:04:05Z07:00"),
-		KeyUpdatedAt: metadata.GetKeyTimestamps(variable),
+	return common.HandleFormatResponse(c, &FormattableVariable{
+		k8sObj:    variable,
+		nsManager: h.nsManager,
 	})
 }
 

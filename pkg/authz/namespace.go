@@ -2,7 +2,7 @@ package authz
 
 import (
 	"github.com/lissto-dev/api/pkg/logging"
-	"github.com/lissto-dev/controller/pkg/config"
+	controllerconfig "github.com/lissto-dev/controller/pkg/config"
 	"github.com/lissto-dev/controller/pkg/namespace"
 	"go.uber.org/zap"
 )
@@ -12,11 +12,11 @@ import (
 // and adds API-specific functionality.
 type NamespaceManager struct {
 	*namespace.Manager
-	config *config.Config
+	config *controllerconfig.Config
 }
 
 // NewNamespaceManager creates a new namespace manager
-func NewNamespaceManager(cfg *config.Config) *NamespaceManager {
+func NewNamespaceManager(cfg *controllerconfig.Config) *NamespaceManager {
 	return &NamespaceManager{
 		Manager: cfg.Namespaces.NewManager(),
 		config:  cfg,
@@ -33,4 +33,9 @@ func (nm *NamespaceManager) GetOwnerFromNamespace(ns string) (string, error) {
 			zap.String("reason", "not_developer_namespace"))
 	}
 	return owner, err
+}
+
+// IsGlobalBranch checks if a branch is configured as global for a specific repository
+func (nm *NamespaceManager) IsGlobalBranch(repository, branch string) bool {
+	return nm.config.IsGlobalBranch(repository, branch)
 }

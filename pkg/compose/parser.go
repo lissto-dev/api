@@ -8,7 +8,7 @@ import (
 
 	"github.com/compose-spec/compose-go/v2/loader"
 	"github.com/compose-spec/compose-go/v2/types"
-	"github.com/lissto-dev/controller/pkg/config"
+	controllerconfig "github.com/lissto-dev/controller/pkg/config"
 )
 
 // ServiceMetadata contains categorized service information
@@ -35,7 +35,7 @@ type LisstoConfig struct {
 // ParseBlueprintMetadata parses docker-compose content and extracts:
 // - Title with priority: x-lissto.title → repo.Name → repo.URL
 // - Service categorization based on build phase and lissto.dev/group label
-func ParseBlueprintMetadata(composeContent string, repoConfig config.RepoConfig) (*BlueprintMetadata, error) {
+func ParseBlueprintMetadata(composeContent string, repoConfig controllerconfig.RepoConfig) (*BlueprintMetadata, error) {
 	// Parse docker-compose
 	project, err := loader.LoadWithContext(
 		context.Background(),
@@ -81,7 +81,7 @@ func ParseBlueprintMetadata(composeContent string, repoConfig config.RepoConfig)
 // 1. x-lissto.title (explicit in docker-compose)
 // 2. repo.Name (configured name from repos config)
 // 3. repo.URL (normalized repository URL)
-func extractTitle(project *types.Project, repoConfig config.RepoConfig) string {
+func extractTitle(project *types.Project, repoConfig controllerconfig.RepoConfig) string {
 	// Priority 1: Check for explicit x-lissto.title
 	if project.Extensions != nil {
 		if lisstoExt, ok := project.Extensions["x-lissto"]; ok {
@@ -101,7 +101,7 @@ func extractTitle(project *types.Project, repoConfig config.RepoConfig) string {
 	}
 
 	// Priority 3: Fall back to normalized repository URL
-	return config.NormalizeRepositoryURL(repoConfig.URL)
+	return controllerconfig.NormalizeRepositoryURL(repoConfig.URL)
 }
 
 // ExtractLisstoConfig extracts x-lissto extension configuration from a project

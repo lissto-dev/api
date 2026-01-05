@@ -1,51 +1,16 @@
 package common
 
 import (
-	"fmt"
-	"strings"
-
 	envv1alpha1 "github.com/lissto-dev/controller/api/v1alpha1"
+	"github.com/lissto-dev/controller/pkg/namespace"
 )
 
-// GenerateScopedIdentifier creates scope/name format
-// Example: global/20250120-150530-a3f5b2c1 or john/20250120-150530-a3f5b2c1
-func GenerateScopedIdentifier(namespace, name string) string {
-	scope := "global"
-
-	// Check if namespace contains "global"
-	if !strings.Contains(namespace, "global") {
-		// Extract author from dev-<author>
-		parts := strings.Split(namespace, "-")
-		if len(parts) > 1 {
-			scope = parts[1]
-		}
-	}
-
-	return fmt.Sprintf("%s/%s", scope, name)
-}
-
-// ParseBlueprintReference parses a scoped blueprint reference into namespace and name
-// Input: "john/20250120-150530-a3f5b2c1" or "global/20250120-150530-a3f5b2c1"
-// Output: namespace ("dev-john" or "lissto-global"), name ("20250120-150530-a3f5b2c1")
-func ParseBlueprintReference(blueprintRef string) (namespace, name string, err error) {
-	parts := strings.Split(blueprintRef, "/")
-	if len(parts) != 2 {
-		return "", "", fmt.Errorf("invalid blueprint reference format: %s (expected scope/name)", blueprintRef)
-	}
-
-	scope := parts[0]
-	name = parts[1]
-
-	// Convert scope to actual namespace
-	if scope == "global" {
-		namespace = "lissto-global"
-	} else {
-		// Convert scope to dev-{scope} format
-		namespace = fmt.Sprintf("dev-%s", scope)
-	}
-
-	return namespace, name, nil
-}
+// Re-export namespace functions for backward compatibility.
+// These delegate to the controller's namespace package.
+var (
+	IsNamespaceAllowed       = namespace.IsNamespaceAllowed
+	ResolveNamespacesToSearch = namespace.ResolveNamespacesToSearch
+)
 
 // ImageCandidate represents a single image candidate that was tried
 type ImageCandidate struct {

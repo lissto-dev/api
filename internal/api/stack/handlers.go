@@ -24,7 +24,8 @@ import (
 	"github.com/lissto-dev/api/pkg/preprocessor"
 	"github.com/lissto-dev/api/pkg/serializer"
 	envv1alpha1 "github.com/lissto-dev/controller/api/v1alpha1"
-	operatorConfig "github.com/lissto-dev/controller/pkg/config"
+	controllerconfig "github.com/lissto-dev/controller/pkg/config"
+	"github.com/lissto-dev/controller/pkg/namespace"
 )
 
 // Handler handles all stack-related HTTP requests
@@ -32,9 +33,41 @@ type Handler struct {
 	k8sClient          *k8s.Client
 	authorizer         *authz.Authorizer
 	nsManager          *authz.NamespaceManager
-	config             *operatorConfig.Config
+	config             *controllerconfig.Config
 	exposePreprocessor *preprocessor.ExposePreprocessor
 	cache              cache.Cache
+}
+
+// StackResponse represents standard stack data
+type StackResponse struct {
+	Name               string `json:"name"`
+	Namespace          string `json:"namespace"`
+	BlueprintReference string `json:"blueprintReference"`
+	EnvReference       string `json:"envReference"`
+}
+
+// FormattableStack wraps a k8s Stack to implement common.Formattable
+type FormattableStack struct {
+	k8sObj    *envv1alpha1.Stack
+	nsManager *authz.NamespaceManager
+}
+
+func (f *FormattableStack) ToDetailed() (common.DetailedResponse, error) {
+	return common.NewDetailedResponse(f.k8sObj.ObjectMeta, f.k8sObj.Spec, f.nsManager)
+}
+
+func (f *FormattableStack) ToStandard() interface{} {
+	return extractStackResponse(f.k8sObj)
+}
+
+// extractStackResponse extracts standard data from stack
+func extractStackResponse(stack *envv1alpha1.Stack) StackResponse {
+	return StackResponse{
+		Name:               stack.Name,
+		Namespace:          stack.Namespace,
+		BlueprintReference: stack.Spec.BlueprintReference,
+		EnvReference:       stack.Spec.Env,
+	}
 }
 
 // NewHandler creates a new stack handler
@@ -42,26 +75,26 @@ func NewHandler(
 	k8sClient *k8s.Client,
 	authorizer *authz.Authorizer,
 	nsManager *authz.NamespaceManager,
-	config *operatorConfig.Config,
+	cfg *controllerconfig.Config,
 	cache cache.Cache,
 ) *Handler {
 	// Create internal config if available
 	var internalConfig *preprocessor.IngressConfig
-	if config.Stacks.Ingress.Internal != nil {
+	if cfg.Stacks.Ingress.Internal != nil {
 		internalConfig = &preprocessor.IngressConfig{
-			IngressClass: config.Stacks.Ingress.Internal.IngressClass,
-			HostSuffix:   config.Stacks.Ingress.Internal.HostSuffix,
-			TLSSecret:    config.Stacks.Ingress.Internal.TLSSecret,
+			IngressClass: cfg.Stacks.Ingress.Internal.IngressClass,
+			HostSuffix:   cfg.Stacks.Ingress.Internal.HostSuffix,
+			TLSSecret:    cfg.Stacks.Ingress.Internal.TLSSecret,
 		}
 	}
 
 	// Create internet config if available
 	var internetConfig *preprocessor.IngressConfig
-	if config.Stacks.Ingress.Internet != nil {
+	if cfg.Stacks.Ingress.Internet != nil {
 		internetConfig = &preprocessor.IngressConfig{
-			IngressClass: config.Stacks.Ingress.Internet.IngressClass,
-			HostSuffix:   config.Stacks.Ingress.Internet.HostSuffix,
-			TLSSecret:    config.Stacks.Ingress.Internet.TLSSecret,
+			IngressClass: cfg.Stacks.Ingress.Internet.IngressClass,
+			HostSuffix:   cfg.Stacks.Ingress.Internet.HostSuffix,
+			TLSSecret:    cfg.Stacks.Ingress.Internet.TLSSecret,
 		}
 	}
 
@@ -72,7 +105,7 @@ func NewHandler(
 		k8sClient:          k8sClient,
 		authorizer:         authorizer,
 		nsManager:          nsManager,
-		config:             config,
+		config:             cfg,
 		exposePreprocessor: exposePreprocessor,
 		cache:              cache,
 	}
@@ -100,7 +133,7 @@ func (h *Handler) CreateStack(c echo.Context) error {
 		zap.String("request_id", req.RequestID))
 
 	// Validate blueprint reference format
-	_, _, err := common.ParseBlueprintReference(req.Blueprint)
+	_, _, err := h.nsManager.ParseScopedID(req.Blueprint)
 	if err != nil {
 		logging.Logger.Error("Failed to parse blueprint reference",
 			zap.String("blueprint", req.Blueprint),
@@ -171,7 +204,7 @@ func (h *Handler) CreateStack(c echo.Context) error {
 	}
 
 	// Step 1: Parse blueprint reference and get blueprint
-	blueprintNamespace, blueprintName, err := common.ParseBlueprintReference(req.Blueprint)
+	blueprintNamespace, blueprintName, err := h.nsManager.ParseScopedID(req.Blueprint)
 	if err != nil {
 		logging.Logger.Error("Failed to parse blueprint reference",
 			zap.String("blueprint", req.Blueprint),
@@ -372,7 +405,7 @@ func (h *Handler) CreateStack(c echo.Context) error {
 		zap.String("user", user.Name))
 
 	// Return scoped identifier
-	identifier := common.GenerateScopedIdentifier(namespace, stackName)
+	identifier := h.nsManager.MustGenerateScopedID(namespace, stackName)
 	return c.String(201, identifier)
 }
 
@@ -419,145 +452,121 @@ func (h *Handler) GetStacks(c echo.Context) error {
 
 // GetStack handles GET /stacks/:id
 func (h *Handler) GetStack(c echo.Context) error {
-	name := c.Param("id")
+	idParam := c.Param("id")
 	user, _ := middleware.GetUserFromContext(c)
 
-	// Get allowed namespaces
-	allowedNS := h.authorizer.GetAllowedNamespaces(
-		user.Role,
-		authz.ActionRead,
-		authz.ResourceStack,
-		user.Name,
-	)
-
+	// Get allowed namespaces for authorization
+	allowedNS := h.authorizer.GetAllowedNamespaces(user.Role, authz.ActionRead, authz.ResourceStack, user.Name)
 	if len(allowedNS) == 0 {
 		return c.String(403, "Permission denied: no accessible namespaces")
 	}
 
-	// Try to find in allowed namespaces
-	if allowedNS[0] == "*" {
-		// Admin: search in all namespaces (no query param needed)
-		// First try global namespace
-		stack, err := h.k8sClient.GetStack(c.Request().Context(), h.nsManager.GetGlobalNamespace(), name)
-		if err == nil {
-			identifier := common.GenerateScopedIdentifier(stack.Namespace, stack.Name)
-			return c.String(200, identifier)
-		}
+	// Resolve namespace from ID
+	targetNamespace, name, searchAll := h.nsManager.ResolveNamespaceFromID(idParam, allowedNS)
 
-		// If not found in global, search all developer namespaces
-		// This is a simplified approach - in production you might want to list all namespaces
-		return c.String(404, fmt.Sprintf("Stack '%s' not found in any accessible namespace", name))
+	// Try to find the stack
+	userNS := h.nsManager.GetDeveloperNamespace(user.Name)
+	globalNS := h.nsManager.GetGlobalNamespace()
+	stack, found := h.findStack(c, targetNamespace, name, searchAll, userNS, globalNS, allowedNS)
+	if !found {
+		return c.String(404, fmt.Sprintf("Stack '%s' not found", idParam))
 	}
 
-	// Try each allowed namespace
-	for _, ns := range allowedNS {
-		stack, err := h.k8sClient.GetStack(c.Request().Context(), ns, name)
-		if err == nil {
-			identifier := common.GenerateScopedIdentifier(stack.Namespace, stack.Name)
-			return c.String(200, identifier)
+	return common.HandleFormatResponse(c, &FormattableStack{k8sObj: stack, nsManager: h.nsManager})
+}
+
+// findStack searches for a stack in the appropriate namespace(s)
+func (h *Handler) findStack(c echo.Context, targetNS, name string, searchAll bool, userNS, globalNS string, allowedNS []string) (*envv1alpha1.Stack, bool) {
+	ctx := c.Request().Context()
+
+	// Get ordered list of namespaces to search
+	namespaces := namespace.ResolveNamespacesToSearch(targetNS, userNS, globalNS, searchAll, allowedNS)
+
+	// Try each namespace in order
+	for _, ns := range namespaces {
+		if stack, err := h.k8sClient.GetStack(ctx, ns, name); err == nil {
+			return stack, true
 		}
 	}
 
-	return c.String(404, fmt.Sprintf("Stack '%s' not found in your namespace", name))
+	return nil, false
 }
 
 // DeleteStack handles DELETE /stacks/:id
 func (h *Handler) DeleteStack(c echo.Context) error {
-	name := c.Param("id")
+	idParam := c.Param("id")
 	user, _ := middleware.GetUserFromContext(c)
 
-	// Get allowed namespaces
-	allowedNS := h.authorizer.GetAllowedNamespaces(
-		user.Role,
-		authz.ActionDelete,
-		authz.ResourceStack,
-		user.Name,
-	)
-
+	// Get allowed namespaces for authorization
+	allowedNS := h.authorizer.GetAllowedNamespaces(user.Role, authz.ActionDelete, authz.ResourceStack, user.Name)
 	if len(allowedNS) == 0 {
 		return c.String(403, "Permission denied: no accessible namespaces")
 	}
 
-	// Try to find and delete in allowed namespaces
-	if allowedNS[0] == "*" {
-		// Admin: search in all namespaces (no query param needed)
-		// First try global namespace
-		if err := h.k8sClient.DeleteStack(c.Request().Context(), h.nsManager.GetGlobalNamespace(), name); err == nil {
-			return c.NoContent(204)
-		}
+	// Resolve namespace from ID
+	targetNamespace, name, searchAll := h.nsManager.ResolveNamespaceFromID(idParam, allowedNS)
 
-		// If not found in global, search all developer namespaces
-		// This is a simplified approach - in production you might want to list all namespaces
-		return c.String(404, fmt.Sprintf("Stack '%s' not found in any accessible namespace", name))
+	// Try to delete the stack
+	userNS := h.nsManager.GetDeveloperNamespace(user.Name)
+	globalNS := h.nsManager.GetGlobalNamespace()
+	if h.deleteStack(c, targetNamespace, name, searchAll, userNS, globalNS, allowedNS) {
+		return c.NoContent(204)
 	}
 
-	// Try each allowed namespace
-	for _, ns := range allowedNS {
-		if err := h.k8sClient.DeleteStack(c.Request().Context(), ns, name); err == nil {
-			return c.NoContent(204)
+	return c.String(404, fmt.Sprintf("Stack '%s' not found", idParam))
+}
+
+// deleteStack searches for and deletes a stack in the appropriate namespace(s)
+func (h *Handler) deleteStack(c echo.Context, targetNS, name string, searchAll bool, userNS, globalNS string, allowedNS []string) bool {
+	ctx := c.Request().Context()
+
+	// Get ordered list of namespaces to search
+	namespaces := namespace.ResolveNamespacesToSearch(targetNS, userNS, globalNS, searchAll, allowedNS)
+
+	// Try to delete from each namespace in order
+	for _, ns := range namespaces {
+		if h.k8sClient.DeleteStack(ctx, ns, name) == nil {
+			return true
 		}
 	}
 
-	return c.String(404, fmt.Sprintf("Stack '%s' not found in your namespace", name))
+	return false
 }
 
 // UpdateStack handles PUT /stacks/:id
 func (h *Handler) UpdateStack(c echo.Context) error {
-	name := c.Param("id")
+	idParam := c.Param("id")
 	user, _ := middleware.GetUserFromContext(c)
 
-	// Parse request body - accept both image info and simple strings
+	// Parse request body
 	var req struct {
 		Images map[string]interface{} `json:"images"`
 	}
 	if err := c.Bind(&req); err != nil {
 		return c.String(400, "Invalid request body")
 	}
-
 	if len(req.Images) == 0 {
 		return c.String(400, "No images provided")
 	}
 
 	// Get allowed namespaces for update
-	allowedNS := h.authorizer.GetAllowedNamespaces(
-		user.Role,
-		authz.ActionUpdate,
-		authz.ResourceStack,
-		user.Name,
-	)
-
+	allowedNS := h.authorizer.GetAllowedNamespaces(user.Role, authz.ActionUpdate, authz.ResourceStack, user.Name)
 	if len(allowedNS) == 0 {
 		return c.String(403, "Permission denied: no accessible namespaces")
 	}
 
-	// Try to find and update in allowed namespaces
-	if allowedNS[0] == "*" {
-		// Admin: search in all namespaces
-		// First try global namespace
-		stack, err := h.k8sClient.GetStack(c.Request().Context(), h.nsManager.GetGlobalNamespace(), name)
-		if err == nil {
-			return h.updateStackImages(c, stack, req.Images, user.Name)
-		}
+	// Resolve namespace from ID
+	targetNamespace, name, searchAll := h.nsManager.ResolveNamespaceFromID(idParam, allowedNS)
 
-		// If not found in global, try developer namespace
-		userNamespace := h.nsManager.GetDeveloperNamespace(user.Name)
-		stack, err = h.k8sClient.GetStack(c.Request().Context(), userNamespace, name)
-		if err == nil {
-			return h.updateStackImages(c, stack, req.Images, user.Name)
-		}
-
-		return c.String(404, fmt.Sprintf("Stack '%s' not found in any accessible namespace", name))
+	// Try to find the stack
+	userNS := h.nsManager.GetDeveloperNamespace(user.Name)
+	globalNS := h.nsManager.GetGlobalNamespace()
+	stack, found := h.findStack(c, targetNamespace, name, searchAll, userNS, globalNS, allowedNS)
+	if !found {
+		return c.String(404, fmt.Sprintf("Stack '%s' not found", idParam))
 	}
 
-	// Try each allowed namespace
-	for _, ns := range allowedNS {
-		stack, err := h.k8sClient.GetStack(c.Request().Context(), ns, name)
-		if err == nil {
-			return h.updateStackImages(c, stack, req.Images, user.Name)
-		}
-	}
-
-	return c.String(404, fmt.Sprintf("Stack '%s' not found in your namespace", name))
+	return h.updateStackImages(c, stack, req.Images, user.Name)
 }
 
 // updateStackImages is a helper to update stack images
@@ -619,7 +628,7 @@ func (h *Handler) updateStackImages(c echo.Context, stack *envv1alpha1.Stack, im
 		zap.Int("updated_services", len(updatedImages)))
 
 	// Return updated stack identifier
-	identifier := common.GenerateScopedIdentifier(stack.Namespace, stack.Name)
+	identifier := h.nsManager.MustGenerateScopedID(stack.Namespace, stack.Name)
 	return c.JSON(200, map[string]interface{}{
 		"data": map[string]string{
 			"id": identifier,

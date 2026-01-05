@@ -20,7 +20,7 @@ import (
 	"github.com/lissto-dev/api/pkg/k8s"
 	"github.com/lissto-dev/api/pkg/logging"
 	"github.com/lissto-dev/api/pkg/preprocessor"
-	operatorConfig "github.com/lissto-dev/controller/pkg/config"
+	controllerconfig "github.com/lissto-dev/controller/pkg/config"
 )
 
 // Handler handles stack preparation requests
@@ -28,7 +28,7 @@ type Handler struct {
 	k8sClient     *k8s.Client
 	authorizer    *authz.Authorizer
 	nsManager     *authz.NamespaceManager
-	config        *operatorConfig.Config
+	config        *controllerconfig.Config
 	imageResolver *image.ImageResolver
 	cache         cache.Cache
 }
@@ -38,7 +38,7 @@ func NewHandler(
 	k8sClient *k8s.Client,
 	authorizer *authz.Authorizer,
 	nsManager *authz.NamespaceManager,
-	config *operatorConfig.Config,
+	cfg *controllerconfig.Config,
 	cache cache.Cache,
 ) *Handler {
 	// Create image existence checker with K8s authentication
@@ -52,22 +52,22 @@ func NewHandler(
 
 	// Create image resolver with global config and cache support
 	imageResolver := image.NewImageResolverWithCache(
-		config.Stacks.Images.Registry,
-		config.Stacks.Images.RepositoryPrefix,
+		cfg.Stacks.Images.Registry,
+		cfg.Stacks.Images.RepositoryPrefix,
 		imageChecker,
 		cache,
 	)
 
 	logging.Logger.Info("Image resolver created with global config and cache",
-		zap.String("global_registry", config.Stacks.Images.Registry),
-		zap.String("global_repository_prefix", config.Stacks.Images.RepositoryPrefix),
+		zap.String("global_registry", cfg.Stacks.Images.Registry),
+		zap.String("global_repository_prefix", cfg.Stacks.Images.RepositoryPrefix),
 		zap.Bool("cache_enabled", cache != nil))
 
 	return &Handler{
 		k8sClient:     k8sClient,
 		authorizer:    authorizer,
 		nsManager:     nsManager,
-		config:        config,
+		config:        cfg,
 		imageResolver: imageResolver,
 		cache:         cache,
 	}
@@ -109,7 +109,7 @@ func (h *Handler) PrepareStack(c echo.Context) error {
 	}
 
 	// Parse blueprint reference
-	blueprintNamespace, blueprintName, err := common.ParseBlueprintReference(req.Blueprint)
+	blueprintNamespace, blueprintName, err := h.nsManager.ParseScopedID(req.Blueprint)
 	if err != nil {
 		logging.Logger.Error("Failed to parse blueprint reference",
 			zap.String("blueprint", req.Blueprint),

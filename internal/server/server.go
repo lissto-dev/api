@@ -21,7 +21,7 @@ import (
 	"github.com/lissto-dev/api/pkg/config"
 	"github.com/lissto-dev/api/pkg/k8s"
 	"github.com/lissto-dev/api/pkg/logging"
-	operatorConfig "github.com/lissto-dev/controller/pkg/config"
+	controllerconfig "github.com/lissto-dev/controller/pkg/config"
 )
 
 // Server represents the API server
@@ -29,7 +29,7 @@ type Server struct {
 	echo       *echo.Echo
 	apiKeys    []config.APIKey
 	apiKeysMu  sync.RWMutex
-	config     *operatorConfig.Config
+	config     *controllerconfig.Config
 	k8sClient  *k8s.Client
 	instanceID string
 	publicURL  string
@@ -57,7 +57,7 @@ func (s *Server) UpdateAPIKeys(keys []config.APIKey) error {
 func New(
 	e *echo.Echo,
 	apiKeys []config.APIKey,
-	cfg *operatorConfig.Config,
+	cfg *controllerconfig.Config,
 	k8sClient *k8s.Client,
 	authorizer *authz.Authorizer,
 	nsManager *authz.NamespaceManager,

@@ -8,14 +8,14 @@ import (
 	"github.com/lissto-dev/api/pkg/k8s"
 	"github.com/lissto-dev/api/pkg/logging"
 	"github.com/lissto-dev/api/pkg/response"
-	operatorConfig "github.com/lissto-dev/controller/pkg/config"
+	controllerconfig "github.com/lissto-dev/controller/pkg/config"
 	"go.uber.org/zap"
 )
 
 // Handler handles API key management requests
 type Handler struct {
 	k8sClient      *k8s.Client
-	config         *operatorConfig.Config
+	config         *controllerconfig.Config
 	apiKeysUpdater func([]config.APIKey) error
 	namespace      string // namespace where API keys are stored
 }
@@ -23,7 +23,7 @@ type Handler struct {
 // NewHandler creates a new API key handler
 func NewHandler(
 	k8sClient *k8s.Client,
-	cfg *operatorConfig.Config,
+	cfg *controllerconfig.Config,
 	apiKeysUpdater func([]config.APIKey) error,
 	namespace string,
 ) *Handler {

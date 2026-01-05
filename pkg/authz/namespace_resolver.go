@@ -46,7 +46,7 @@ func (a *Authorizer) DetermineNamespaceForBlueprint(
 	}
 
 	// Check if branch is global for the specific repository
-	if a.nsManager.config.IsGlobalBranch(repository, branch) {
+	if a.nsManager.IsGlobalBranch(repository, branch) {
 		// Only admin and deploy roles can use global namespace
 		if role == Admin || role == Deploy {
 			return a.nsManager.GetGlobalNamespace(), nil
