@@ -21,21 +21,12 @@ type DetailedMetadata struct {
 }
 
 // ExtractDetailedMetadata extracts and normalizes metadata from k8s objects
-// Uses existing NamespaceManager methods for namespace normalization
+// Uses the controller's NormalizeToScope for namespace normalization
 // Returns error if namespace type is unknown
 func ExtractDetailedMetadata(obj metav1.ObjectMeta, nsManager *authz.NamespaceManager) (DetailedMetadata, error) {
-	var normalizedNS string
-
-	if nsManager.IsGlobalNamespace(obj.Namespace) {
-		normalizedNS = "global"
-	} else if nsManager.IsDeveloperNamespace(obj.Namespace) {
-		owner, err := nsManager.GetOwnerFromNamespace(obj.Namespace)
-		if err != nil {
-			return DetailedMetadata{}, fmt.Errorf("failed to extract owner from namespace: %w", err)
-		}
-		normalizedNS = owner
-	} else {
-		return DetailedMetadata{}, fmt.Errorf("unknown namespace type: %s", obj.Namespace)
+	normalizedNS, err := nsManager.NormalizeToScope(obj.Namespace)
+	if err != nil {
+		return DetailedMetadata{}, fmt.Errorf("failed to normalize namespace: %w", err)
 	}
 
 	return DetailedMetadata{
