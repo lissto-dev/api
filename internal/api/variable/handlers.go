@@ -13,7 +13,7 @@ import (
 	"github.com/lissto-dev/api/pkg/logging"
 	"github.com/lissto-dev/api/pkg/metadata"
 	envv1alpha1 "github.com/lissto-dev/controller/api/v1alpha1"
-	operatorConfig "github.com/lissto-dev/controller/pkg/config"
+	"github.com/lissto-dev/controller/pkg/config"
 	"go.uber.org/zap"
 )
 
@@ -22,7 +22,7 @@ type Handler struct {
 	k8sClient  *k8s.Client
 	authorizer *authz.Authorizer
 	nsManager  *authz.NamespaceManager
-	config     *operatorConfig.Config
+	config     *config.Config
 }
 
 // NewHandler creates a new variable handler
@@ -30,7 +30,7 @@ func NewHandler(
 	k8sClient *k8s.Client,
 	authorizer *authz.Authorizer,
 	nsManager *authz.NamespaceManager,
-	config *operatorConfig.Config,
+	config *config.Config,
 ) *Handler {
 	return &Handler{
 		k8sClient:  k8sClient,

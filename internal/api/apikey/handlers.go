@@ -4,27 +4,27 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/lissto-dev/api/internal/middleware"
 	"github.com/lissto-dev/api/pkg/authz"
-	"github.com/lissto-dev/api/pkg/config"
+	apiconfig "github.com/lissto-dev/api/pkg/config"
 	"github.com/lissto-dev/api/pkg/k8s"
 	"github.com/lissto-dev/api/pkg/logging"
 	"github.com/lissto-dev/api/pkg/response"
-	operatorConfig "github.com/lissto-dev/controller/pkg/config"
+	"github.com/lissto-dev/controller/pkg/config"
 	"go.uber.org/zap"
 )
 
 // Handler handles API key management requests
 type Handler struct {
 	k8sClient      *k8s.Client
-	config         *operatorConfig.Config
-	apiKeysUpdater func([]config.APIKey) error
+	config         *config.Config
+	apiKeysUpdater func([]apiconfig.APIKey) error
 	namespace      string // namespace where API keys are stored
 }
 
 // NewHandler creates a new API key handler
 func NewHandler(
 	k8sClient *k8s.Client,
-	cfg *operatorConfig.Config,
-	apiKeysUpdater func([]config.APIKey) error,
+	cfg *config.Config,
+	apiKeysUpdater func([]apiconfig.APIKey) error,
 	namespace string,
 ) *Handler {
 	return &Handler{
@@ -89,14 +89,14 @@ func (h *Handler) CreateAPIKey(c echo.Context) error {
 	}
 
 	// Generate API key with role-based prefix
-	apiKeyValue, err := config.GenerateAPIKey(req.Role)
+	apiKeyValue, err := apiconfig.GenerateAPIKey(req.Role)
 	if err != nil {
 		logging.Logger.Error("Failed to generate API key", zap.Error(err))
 		return response.InternalServerError(c, "Failed to generate API key")
 	}
 
 	// Create new API key
-	newAPIKey := config.APIKey{
+	newAPIKey := apiconfig.APIKey{
 		Role:        req.Role,
 		APIKey:      apiKeyValue,
 		Name:        req.Name,
@@ -105,7 +105,7 @@ func (h *Handler) CreateAPIKey(c echo.Context) error {
 
 	// Load current keys from secret (from API's own namespace)
 	ctx := c.Request().Context()
-	currentKeys, err := config.LoadAPIKeysFromSecret(ctx, h.k8sClient, h.namespace, config.SecretName)
+	currentKeys, err := apiconfig.LoadAPIKeysFromSecret(ctx, h.k8sClient, h.namespace, apiconfig.SecretName)
 	if err != nil {
 		logging.Logger.Error("Failed to load API keys from secret",
 			zap.String("namespace", h.namespace),
@@ -124,7 +124,7 @@ func (h *Handler) CreateAPIKey(c echo.Context) error {
 	updatedKeys := append(currentKeys, newAPIKey)
 
 	// Save to secret (in API's own namespace)
-	if err := config.SaveAPIKeysToSecret(ctx, h.k8sClient, h.namespace, config.SecretName, updatedKeys); err != nil {
+	if err := apiconfig.SaveAPIKeysToSecret(ctx, h.k8sClient, h.namespace, apiconfig.SecretName, updatedKeys); err != nil {
 		logging.Logger.Error("Failed to save API key to secret",
 			zap.String("namespace", h.namespace),
 			zap.Error(err))

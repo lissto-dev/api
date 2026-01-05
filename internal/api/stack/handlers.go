@@ -24,7 +24,8 @@ import (
 	"github.com/lissto-dev/api/pkg/preprocessor"
 	"github.com/lissto-dev/api/pkg/serializer"
 	envv1alpha1 "github.com/lissto-dev/controller/api/v1alpha1"
-	operatorConfig "github.com/lissto-dev/controller/pkg/config"
+	"github.com/lissto-dev/controller/pkg/config"
+	"github.com/lissto-dev/controller/pkg/namespace"
 )
 
 // Handler handles all stack-related HTTP requests
@@ -32,7 +33,7 @@ type Handler struct {
 	k8sClient          *k8s.Client
 	authorizer         *authz.Authorizer
 	nsManager          *authz.NamespaceManager
-	config             *operatorConfig.Config
+	config             *config.Config
 	exposePreprocessor *preprocessor.ExposePreprocessor
 	cache              cache.Cache
 }
@@ -74,7 +75,7 @@ func NewHandler(
 	k8sClient *k8s.Client,
 	authorizer *authz.Authorizer,
 	nsManager *authz.NamespaceManager,
-	config *operatorConfig.Config,
+	config *config.Config,
 	cache cache.Cache,
 ) *Handler {
 	// Create internal config if available
@@ -132,7 +133,7 @@ func (h *Handler) CreateStack(c echo.Context) error {
 		zap.String("request_id", req.RequestID))
 
 	// Validate blueprint reference format
-	_, _, err := common.ParseBlueprintReference(req.Blueprint)
+	_, _, err := h.nsManager.ParseScopedID(req.Blueprint)
 	if err != nil {
 		logging.Logger.Error("Failed to parse blueprint reference",
 			zap.String("blueprint", req.Blueprint),
@@ -203,7 +204,7 @@ func (h *Handler) CreateStack(c echo.Context) error {
 	}
 
 	// Step 1: Parse blueprint reference and get blueprint
-	blueprintNamespace, blueprintName, err := common.ParseBlueprintReference(req.Blueprint)
+	blueprintNamespace, blueprintName, err := h.nsManager.ParseScopedID(req.Blueprint)
 	if err != nil {
 		logging.Logger.Error("Failed to parse blueprint reference",
 			zap.String("blueprint", req.Blueprint),
@@ -404,7 +405,7 @@ func (h *Handler) CreateStack(c echo.Context) error {
 		zap.String("user", user.Name))
 
 	// Return scoped identifier
-	identifier := common.GenerateScopedIdentifier(namespace, stackName)
+	identifier := h.nsManager.MustGenerateScopedID(namespace, stackName)
 	return c.String(201, identifier)
 }
 
@@ -461,7 +462,7 @@ func (h *Handler) GetStack(c echo.Context) error {
 	}
 
 	// Resolve namespace from ID
-	targetNamespace, name, searchAll := common.ResolveNamespaceFromID(idParam, allowedNS)
+	targetNamespace, name, searchAll := h.nsManager.ResolveNamespaceFromID(idParam, allowedNS)
 
 	// Try to find the stack
 	userNS := h.nsManager.GetDeveloperNamespace(user.Name)
@@ -479,7 +480,7 @@ func (h *Handler) findStack(c echo.Context, targetNS, name string, searchAll boo
 	ctx := c.Request().Context()
 
 	// Get ordered list of namespaces to search
-	namespaces := common.ResolveNamespacesToSearch(targetNS, userNS, globalNS, searchAll, allowedNS)
+	namespaces := namespace.ResolveNamespacesToSearch(targetNS, userNS, globalNS, searchAll, allowedNS)
 
 	// Try each namespace in order
 	for _, ns := range namespaces {
@@ -503,7 +504,7 @@ func (h *Handler) DeleteStack(c echo.Context) error {
 	}
 
 	// Resolve namespace from ID
-	targetNamespace, name, searchAll := common.ResolveNamespaceFromID(idParam, allowedNS)
+	targetNamespace, name, searchAll := h.nsManager.ResolveNamespaceFromID(idParam, allowedNS)
 
 	// Try to delete the stack
 	userNS := h.nsManager.GetDeveloperNamespace(user.Name)
@@ -520,7 +521,7 @@ func (h *Handler) deleteStack(c echo.Context, targetNS, name string, searchAll b
 	ctx := c.Request().Context()
 
 	// Get ordered list of namespaces to search
-	namespaces := common.ResolveNamespacesToSearch(targetNS, userNS, globalNS, searchAll, allowedNS)
+	namespaces := namespace.ResolveNamespacesToSearch(targetNS, userNS, globalNS, searchAll, allowedNS)
 
 	// Try to delete from each namespace in order
 	for _, ns := range namespaces {
@@ -555,7 +556,7 @@ func (h *Handler) UpdateStack(c echo.Context) error {
 	}
 
 	// Resolve namespace from ID
-	targetNamespace, name, searchAll := common.ResolveNamespaceFromID(idParam, allowedNS)
+	targetNamespace, name, searchAll := h.nsManager.ResolveNamespaceFromID(idParam, allowedNS)
 
 	// Try to find the stack
 	userNS := h.nsManager.GetDeveloperNamespace(user.Name)
@@ -627,7 +628,7 @@ func (h *Handler) updateStackImages(c echo.Context, stack *envv1alpha1.Stack, im
 		zap.Int("updated_services", len(updatedImages)))
 
 	// Return updated stack identifier
-	identifier := common.GenerateScopedIdentifier(stack.Namespace, stack.Name)
+	identifier := h.nsManager.MustGenerateScopedID(stack.Namespace, stack.Name)
 	return c.JSON(200, map[string]interface{}{
 		"data": map[string]string{
 			"id": identifier,

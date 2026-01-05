@@ -20,7 +20,7 @@ import (
 	"github.com/lissto-dev/api/pkg/k8s"
 	"github.com/lissto-dev/api/pkg/logging"
 	"github.com/lissto-dev/api/pkg/preprocessor"
-	operatorConfig "github.com/lissto-dev/controller/pkg/config"
+	"github.com/lissto-dev/controller/pkg/config"
 )
 
 // Handler handles stack preparation requests
@@ -28,7 +28,7 @@ type Handler struct {
 	k8sClient     *k8s.Client
 	authorizer    *authz.Authorizer
 	nsManager     *authz.NamespaceManager
-	config        *operatorConfig.Config
+	config        *config.Config
 	imageResolver *image.ImageResolver
 	cache         cache.Cache
 }
@@ -38,7 +38,7 @@ func NewHandler(
 	k8sClient *k8s.Client,
 	authorizer *authz.Authorizer,
 	nsManager *authz.NamespaceManager,
-	config *operatorConfig.Config,
+	config *config.Config,
 	cache cache.Cache,
 ) *Handler {
 	// Create image existence checker with K8s authentication
@@ -109,7 +109,7 @@ func (h *Handler) PrepareStack(c echo.Context) error {
 	}
 
 	// Parse blueprint reference
-	blueprintNamespace, blueprintName, err := common.ParseBlueprintReference(req.Blueprint)
+	blueprintNamespace, blueprintName, err := h.nsManager.ParseScopedID(req.Blueprint)
 	if err != nil {
 		logging.Logger.Error("Failed to parse blueprint reference",
 			zap.String("blueprint", req.Blueprint),

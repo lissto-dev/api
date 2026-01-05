@@ -344,6 +344,12 @@ var _ = Describe("FormattableBlueprint", func() {
 
 	Describe("ToStandard", func() {
 		It("should return BlueprintResponse with scoped ID", func() {
+			config := &operatorConfig.Config{}
+			config.Namespaces.Global = "lissto-global"
+			config.Namespaces.DeveloperPrefix = "lissto-"
+
+			nsManager := authz.NewNamespaceManager(config)
+
 			bp := &envv1alpha1.Blueprint{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "standard-blueprint",
@@ -362,7 +368,7 @@ var _ = Describe("FormattableBlueprint", func() {
 
 			formattable := &blueprint.FormattableBlueprint{
 				K8sObj:    bp,
-				NsManager: nil, // Not needed for ToStandard
+				NsManager: nsManager,
 			}
 
 			standard := formattable.ToStandard()

@@ -14,11 +14,11 @@ import (
 	internalMiddleware "github.com/lissto-dev/api/internal/middleware"
 	"github.com/lissto-dev/api/internal/server"
 	"github.com/lissto-dev/api/pkg/authz"
-	"github.com/lissto-dev/api/pkg/config"
+	apiconfig "github.com/lissto-dev/api/pkg/config"
 	"github.com/lissto-dev/api/pkg/k8s"
 	"github.com/lissto-dev/api/pkg/logging"
 	pkgServer "github.com/lissto-dev/api/pkg/server"
-	operatorConfig "github.com/lissto-dev/controller/pkg/config"
+	"github.com/lissto-dev/controller/pkg/config"
 )
 
 // CustomValidator wraps the validator
@@ -43,7 +43,7 @@ func main() {
 	flag.Parse()
 
 	// Load shared operator configuration
-	cfg, err := operatorConfig.LoadConfig(configPath)
+	cfg, err := config.LoadConfig(configPath)
 	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)
 	}
@@ -88,7 +88,7 @@ func main() {
 	logging.Logger.Info("Global namespace ready", zap.String("namespace", cfg.Namespaces.Global))
 
 	// Load API keys from Kubernetes secret (in API's own namespace)
-	apiKeys, err := config.LoadAPIKeysFromSecret(ctx, k8sClient, apiNamespace, config.SecretName)
+	apiKeys, err := apiconfig.LoadAPIKeysFromSecret(ctx, k8sClient, apiNamespace, apiconfig.SecretName)
 	if err != nil {
 		logging.Logger.Fatal("Failed to load API keys from secret",
 			zap.String("namespace", apiNamespace),
@@ -97,21 +97,21 @@ func main() {
 
 	// Ensure admin key exists, generate if not
 	var adminKeyGenerated bool
-	apiKeys, adminKeyGenerated, err = config.EnsureAdminKey(apiKeys)
+	apiKeys, adminKeyGenerated, err = apiconfig.EnsureAdminKey(apiKeys)
 	if err != nil {
 		logging.Logger.Fatal("Failed to ensure admin key", zap.Error(err))
 	}
 
 	// If admin key was generated, save it to the secret (in API's own namespace)
 	if adminKeyGenerated {
-		if err := config.SaveAPIKeysToSecret(ctx, k8sClient, apiNamespace, config.SecretName, apiKeys); err != nil {
+		if err := apiconfig.SaveAPIKeysToSecret(ctx, k8sClient, apiNamespace, apiconfig.SecretName, apiKeys); err != nil {
 			logging.Logger.Fatal("Failed to save admin key to secret",
 				zap.String("namespace", apiNamespace),
 				zap.Error(err))
 		}
 		logging.Logger.Info("Admin key generated and saved to secret",
 			zap.String("namespace", apiNamespace),
-			zap.String("secret", config.SecretName))
+			zap.String("secret", apiconfig.SecretName))
 	}
 
 	logging.Logger.Info("API keys loaded",
@@ -119,7 +119,7 @@ func main() {
 		zap.String("namespace", apiNamespace))
 
 	// Get or create API instance ID (stored in the same secret as API keys)
-	instanceID, err := pkgServer.GetOrCreateInstanceID(ctx, k8sClient, apiNamespace, config.SecretName)
+	instanceID, err := pkgServer.GetOrCreateInstanceID(ctx, k8sClient, apiNamespace, apiconfig.SecretName)
 	if err != nil {
 		logging.Logger.Fatal("Failed to get or create instance ID", zap.Error(err))
 	}

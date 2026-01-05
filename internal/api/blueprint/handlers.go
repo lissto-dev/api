@@ -13,7 +13,8 @@ import (
 	"github.com/lissto-dev/api/pkg/k8s"
 	"github.com/lissto-dev/api/pkg/logging"
 	envv1alpha1 "github.com/lissto-dev/controller/api/v1alpha1"
-	operatorConfig "github.com/lissto-dev/controller/pkg/config"
+	"github.com/lissto-dev/controller/pkg/config"
+	"github.com/lissto-dev/controller/pkg/namespace"
 	"go.uber.org/zap"
 )
 
@@ -22,7 +23,7 @@ type Handler struct {
 	k8sClient  *k8s.Client
 	authorizer *authz.Authorizer
 	nsManager  *authz.NamespaceManager
-	config     *operatorConfig.Config
+	config     *config.Config
 }
 
 // NewHandler creates a new blueprint handler
@@ -30,7 +31,7 @@ func NewHandler(
 	k8sClient *k8s.Client,
 	authorizer *authz.Authorizer,
 	nsManager *authz.NamespaceManager,
-	config *operatorConfig.Config,
+	config *config.Config,
 ) *Handler {
 	return &Handler{
 		k8sClient:  k8sClient,
@@ -163,7 +164,7 @@ func (h *Handler) CreateBlueprint(c echo.Context) error {
 	// Return the most appropriate match
 	if targetNamespaceMatch != nil {
 		// Same content already exists in target namespace - return 200 with identifier
-		identifier := common.GenerateScopedIdentifier(namespace, targetNamespaceMatch.Name)
+		identifier := h.nsManager.MustGenerateScopedID(namespace, targetNamespaceMatch.Name)
 		logging.Logger.Info("Blueprint already exists in target namespace",
 			zap.String("user", user.Name),
 			zap.String("namespace", namespace),
@@ -174,7 +175,7 @@ func (h *Handler) CreateBlueprint(c echo.Context) error {
 
 	if globalNamespaceMatch != nil && user.Role == authz.Deploy {
 		// Deploy role found duplicate in global namespace - return 200 with global identifier
-		identifier := common.GenerateScopedIdentifier(globalNamespace, globalNamespaceMatch.Name)
+		identifier := h.nsManager.MustGenerateScopedID(globalNamespace, globalNamespaceMatch.Name)
 		logging.Logger.Info("Deploy role found duplicate in global namespace",
 			zap.String("user", user.Name),
 			zap.String("target_namespace", namespace),
@@ -226,7 +227,7 @@ func (h *Handler) CreateBlueprint(c echo.Context) error {
 	}
 	if req.Repository != "" {
 		// Normalize repository URL before storing for consistent comparison
-		normalizedRepo := operatorConfig.NormalizeRepositoryURL(req.Repository)
+		normalizedRepo := config.NormalizeRepositoryURL(req.Repository)
 		annotations["lissto.dev/repository"] = normalizedRepo
 	}
 	annotations["lissto.dev/services"] = servicesJSON
@@ -257,7 +258,7 @@ func (h *Handler) CreateBlueprint(c echo.Context) error {
 	}
 
 	// Return 201 with scoped identifier
-	identifier := common.GenerateScopedIdentifier(namespace, blueprintName)
+	identifier := h.nsManager.MustGenerateScopedID(namespace, blueprintName)
 	return c.String(201, identifier)
 }
 
@@ -279,12 +280,12 @@ func (f *FormattableBlueprint) ToDetailed() (common.DetailedResponse, error) {
 }
 
 func (f *FormattableBlueprint) ToStandard() interface{} {
-	return extractBlueprintResponse(f.K8sObj)
+	return extractBlueprintResponse(f.K8sObj, f.NsManager)
 }
 
 // extractBlueprintResponse extracts enriched data from blueprint annotations
-func extractBlueprintResponse(bp *envv1alpha1.Blueprint) BlueprintResponse {
-	identifier := common.GenerateScopedIdentifier(bp.Namespace, bp.Name)
+func extractBlueprintResponse(bp *envv1alpha1.Blueprint, nsManager *authz.NamespaceManager) BlueprintResponse {
+	identifier := nsManager.MustGenerateScopedID(bp.Namespace, bp.Name)
 
 	// Extract title
 	title := common.ExtractBlueprintTitle(bp, "")
@@ -339,7 +340,7 @@ func (h *Handler) GetBlueprints(c echo.Context) error {
 			return c.String(500, "Failed to list blueprints")
 		}
 		for i := range bpList.Items {
-			allBlueprints = append(allBlueprints, extractBlueprintResponse(&bpList.Items[i]))
+			allBlueprints = append(allBlueprints, extractBlueprintResponse(&bpList.Items[i], h.nsManager))
 		}
 	} else {
 		// List from each allowed namespace
@@ -349,7 +350,7 @@ func (h *Handler) GetBlueprints(c echo.Context) error {
 				continue
 			}
 			for i := range bpList.Items {
-				allBlueprints = append(allBlueprints, extractBlueprintResponse(&bpList.Items[i]))
+				allBlueprints = append(allBlueprints, extractBlueprintResponse(&bpList.Items[i], h.nsManager))
 			}
 		}
 	}
@@ -370,7 +371,7 @@ func (h *Handler) GetBlueprint(c echo.Context) error {
 	}
 
 	// Resolve namespace from ID
-	targetNamespace, name, searchAll := common.ResolveNamespaceFromID(idParam, allowedNS)
+	targetNamespace, name, searchAll := h.nsManager.ResolveNamespaceFromID(idParam, allowedNS)
 
 	// Try to find the blueprint
 	userNS := h.nsManager.GetDeveloperNamespace(user.Name)
@@ -388,7 +389,7 @@ func (h *Handler) findBlueprint(c echo.Context, targetNS, name string, searchAll
 	ctx := c.Request().Context()
 
 	// Get ordered list of namespaces to search
-	namespaces := common.ResolveNamespacesToSearch(targetNS, userNS, globalNS, searchAll, allowedNS)
+	namespaces := namespace.ResolveNamespacesToSearch(targetNS, userNS, globalNS, searchAll, allowedNS)
 
 	// Try each namespace in order
 	for _, ns := range namespaces {
@@ -412,7 +413,7 @@ func (h *Handler) DeleteBlueprint(c echo.Context) error {
 	}
 
 	// Resolve namespace from ID
-	targetNamespace, name, searchAll := common.ResolveNamespaceFromID(idParam, allowedNS)
+	targetNamespace, name, searchAll := h.nsManager.ResolveNamespaceFromID(idParam, allowedNS)
 
 	// Try to delete the blueprint
 	userNS := h.nsManager.GetDeveloperNamespace(user.Name)
@@ -429,7 +430,7 @@ func (h *Handler) deleteBlueprint(c echo.Context, targetNS, name string, searchA
 	ctx := c.Request().Context()
 
 	// Get ordered list of namespaces to search
-	namespaces := common.ResolveNamespacesToSearch(targetNS, userNS, globalNS, searchAll, allowedNS)
+	namespaces := namespace.ResolveNamespacesToSearch(targetNS, userNS, globalNS, searchAll, allowedNS)
 
 	// Try to delete from each namespace in order
 	for _, ns := range namespaces {

@@ -12,7 +12,7 @@ import (
 	"github.com/lissto-dev/api/pkg/k8s"
 	"github.com/lissto-dev/api/pkg/logging"
 	envv1alpha1 "github.com/lissto-dev/controller/api/v1alpha1"
-	operatorConfig "github.com/lissto-dev/controller/pkg/config"
+	"github.com/lissto-dev/controller/pkg/config"
 	"go.uber.org/zap"
 )
 
@@ -21,7 +21,7 @@ type Handler struct {
 	k8sClient  *k8s.Client
 	authorizer *authz.Authorizer
 	nsManager  *authz.NamespaceManager
-	config     *operatorConfig.Config
+	config     *config.Config
 }
 
 // FormattableEnv wraps a k8s Env to implement common.Formattable
@@ -35,12 +35,12 @@ func (f *FormattableEnv) ToDetailed() (common.DetailedResponse, error) {
 }
 
 func (f *FormattableEnv) ToStandard() interface{} {
-	return extractEnvResponse(f.k8sObj)
+	return extractEnvResponse(f.k8sObj, f.nsManager)
 }
 
 // extractEnvResponse extracts standard data from env
-func extractEnvResponse(env *envv1alpha1.Env) common.EnvResponse {
-	identifier := common.GenerateScopedIdentifier(env.Namespace, env.Name)
+func extractEnvResponse(env *envv1alpha1.Env, nsManager *authz.NamespaceManager) common.EnvResponse {
+	identifier := nsManager.MustGenerateScopedID(env.Namespace, env.Name)
 	return common.EnvResponse{
 		ID:   identifier,
 		Name: env.Name,
@@ -52,7 +52,7 @@ func NewHandler(
 	k8sClient *k8s.Client,
 	authorizer *authz.Authorizer,
 	nsManager *authz.NamespaceManager,
-	config *operatorConfig.Config,
+	config *config.Config,
 ) *Handler {
 	return &Handler{
 		k8sClient:  k8sClient,
@@ -134,7 +134,7 @@ func (h *Handler) CreateEnv(c echo.Context) error {
 		zap.String("user", user.Name))
 
 	// Return scoped identifier
-	identifier := common.GenerateScopedIdentifier(namespace, req.Name)
+	identifier := h.nsManager.MustGenerateScopedID(namespace, req.Name)
 	return c.String(201, identifier)
 }
 
@@ -168,7 +168,7 @@ func (h *Handler) GetEnvs(c echo.Context) error {
 	// Convert to response format
 	var envs []common.EnvResponse
 	for _, env := range envList.Items {
-		identifier := common.GenerateScopedIdentifier(env.Namespace, env.Name)
+		identifier := h.nsManager.MustGenerateScopedID(env.Namespace, env.Name)
 		envs = append(envs, common.EnvResponse{
 			ID:   identifier,
 			Name: env.Name,
