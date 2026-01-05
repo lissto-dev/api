@@ -13,7 +13,6 @@ import (
 	"github.com/lissto-dev/api/pkg/k8s"
 	"github.com/lissto-dev/api/pkg/logging"
 	envv1alpha1 "github.com/lissto-dev/controller/api/v1alpha1"
-	controllerconfig "github.com/lissto-dev/controller/pkg/config"
 	operatorConfig "github.com/lissto-dev/controller/pkg/config"
 	"go.uber.org/zap"
 )
@@ -227,7 +226,7 @@ func (h *Handler) CreateBlueprint(c echo.Context) error {
 	}
 	if req.Repository != "" {
 		// Normalize repository URL before storing for consistent comparison
-		normalizedRepo := controllerconfig.NormalizeRepositoryURL(req.Repository)
+		normalizedRepo := operatorConfig.NormalizeRepositoryURL(req.Repository)
 		annotations["lissto.dev/repository"] = normalizedRepo
 	}
 	annotations["lissto.dev/services"] = servicesJSON
