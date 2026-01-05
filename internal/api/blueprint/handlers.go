@@ -13,7 +13,7 @@ import (
 	"github.com/lissto-dev/api/pkg/k8s"
 	"github.com/lissto-dev/api/pkg/logging"
 	envv1alpha1 "github.com/lissto-dev/controller/api/v1alpha1"
-	"github.com/lissto-dev/controller/pkg/config"
+	controllerconfig "github.com/lissto-dev/controller/pkg/config"
 	"github.com/lissto-dev/controller/pkg/namespace"
 	"go.uber.org/zap"
 )
@@ -23,7 +23,7 @@ type Handler struct {
 	k8sClient  *k8s.Client
 	authorizer *authz.Authorizer
 	nsManager  *authz.NamespaceManager
-	config     *config.Config
+	config     *controllerconfig.Config
 }
 
 // NewHandler creates a new blueprint handler
@@ -31,7 +31,7 @@ func NewHandler(
 	k8sClient *k8s.Client,
 	authorizer *authz.Authorizer,
 	nsManager *authz.NamespaceManager,
-	config *config.Config,
+	config *controllerconfig.Config,
 ) *Handler {
 	return &Handler{
 		k8sClient:  k8sClient,
@@ -227,7 +227,7 @@ func (h *Handler) CreateBlueprint(c echo.Context) error {
 	}
 	if req.Repository != "" {
 		// Normalize repository URL before storing for consistent comparison
-		normalizedRepo := config.NormalizeRepositoryURL(req.Repository)
+		normalizedRepo := controllerconfig.NormalizeRepositoryURL(req.Repository)
 		annotations["lissto.dev/repository"] = normalizedRepo
 	}
 	annotations["lissto.dev/services"] = servicesJSON

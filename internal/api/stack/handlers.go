@@ -24,7 +24,7 @@ import (
 	"github.com/lissto-dev/api/pkg/preprocessor"
 	"github.com/lissto-dev/api/pkg/serializer"
 	envv1alpha1 "github.com/lissto-dev/controller/api/v1alpha1"
-	"github.com/lissto-dev/controller/pkg/config"
+	controllerconfig "github.com/lissto-dev/controller/pkg/config"
 	"github.com/lissto-dev/controller/pkg/namespace"
 )
 
@@ -33,7 +33,7 @@ type Handler struct {
 	k8sClient          *k8s.Client
 	authorizer         *authz.Authorizer
 	nsManager          *authz.NamespaceManager
-	config             *config.Config
+	config             *controllerconfig.Config
 	exposePreprocessor *preprocessor.ExposePreprocessor
 	cache              cache.Cache
 }
@@ -75,26 +75,26 @@ func NewHandler(
 	k8sClient *k8s.Client,
 	authorizer *authz.Authorizer,
 	nsManager *authz.NamespaceManager,
-	config *config.Config,
+	cfg *controllerconfig.Config,
 	cache cache.Cache,
 ) *Handler {
 	// Create internal config if available
 	var internalConfig *preprocessor.IngressConfig
-	if config.Stacks.Ingress.Internal != nil {
+	if cfg.Stacks.Ingress.Internal != nil {
 		internalConfig = &preprocessor.IngressConfig{
-			IngressClass: config.Stacks.Ingress.Internal.IngressClass,
-			HostSuffix:   config.Stacks.Ingress.Internal.HostSuffix,
-			TLSSecret:    config.Stacks.Ingress.Internal.TLSSecret,
+			IngressClass: cfg.Stacks.Ingress.Internal.IngressClass,
+			HostSuffix:   cfg.Stacks.Ingress.Internal.HostSuffix,
+			TLSSecret:    cfg.Stacks.Ingress.Internal.TLSSecret,
 		}
 	}
 
 	// Create internet config if available
 	var internetConfig *preprocessor.IngressConfig
-	if config.Stacks.Ingress.Internet != nil {
+	if cfg.Stacks.Ingress.Internet != nil {
 		internetConfig = &preprocessor.IngressConfig{
-			IngressClass: config.Stacks.Ingress.Internet.IngressClass,
-			HostSuffix:   config.Stacks.Ingress.Internet.HostSuffix,
-			TLSSecret:    config.Stacks.Ingress.Internet.TLSSecret,
+			IngressClass: cfg.Stacks.Ingress.Internet.IngressClass,
+			HostSuffix:   cfg.Stacks.Ingress.Internet.HostSuffix,
+			TLSSecret:    cfg.Stacks.Ingress.Internet.TLSSecret,
 		}
 	}
 
@@ -105,7 +105,7 @@ func NewHandler(
 		k8sClient:          k8sClient,
 		authorizer:         authorizer,
 		nsManager:          nsManager,
-		config:             config,
+		config:             cfg,
 		exposePreprocessor: exposePreprocessor,
 		cache:              cache,
 	}

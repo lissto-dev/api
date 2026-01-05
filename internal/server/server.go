@@ -18,37 +18,37 @@ import (
 	"github.com/lissto-dev/api/internal/middleware"
 	"github.com/lissto-dev/api/pkg/authz"
 	"github.com/lissto-dev/api/pkg/cache"
-	apiconfig "github.com/lissto-dev/api/pkg/config"
+	"github.com/lissto-dev/api/pkg/config"
 	"github.com/lissto-dev/api/pkg/k8s"
 	"github.com/lissto-dev/api/pkg/logging"
-	"github.com/lissto-dev/controller/pkg/config"
+	controllerconfig "github.com/lissto-dev/controller/pkg/config"
 )
 
 // Server represents the API server
 type Server struct {
 	echo       *echo.Echo
-	apiKeys    []apiconfig.APIKey
+	apiKeys    []config.APIKey
 	apiKeysMu  sync.RWMutex
-	config     *config.Config
+	config     *controllerconfig.Config
 	k8sClient  *k8s.Client
 	instanceID string
 	publicURL  string
 }
 
 // GetAPIKeys returns a copy of the current API keys
-func (s *Server) GetAPIKeys() []apiconfig.APIKey {
+func (s *Server) GetAPIKeys() []config.APIKey {
 	s.apiKeysMu.RLock()
 	defer s.apiKeysMu.RUnlock()
-	keys := make([]apiconfig.APIKey, len(s.apiKeys))
+	keys := make([]config.APIKey, len(s.apiKeys))
 	copy(keys, s.apiKeys)
 	return keys
 }
 
 // UpdateAPIKeys updates the in-memory API keys list
-func (s *Server) UpdateAPIKeys(keys []apiconfig.APIKey) error {
+func (s *Server) UpdateAPIKeys(keys []config.APIKey) error {
 	s.apiKeysMu.Lock()
 	defer s.apiKeysMu.Unlock()
-	s.apiKeys = make([]apiconfig.APIKey, len(keys))
+	s.apiKeys = make([]config.APIKey, len(keys))
 	copy(s.apiKeys, keys)
 	return nil
 }
@@ -56,8 +56,8 @@ func (s *Server) UpdateAPIKeys(keys []apiconfig.APIKey) error {
 // New creates a new API server instance
 func New(
 	e *echo.Echo,
-	apiKeys []apiconfig.APIKey,
-	cfg *config.Config,
+	apiKeys []config.APIKey,
+	cfg *controllerconfig.Config,
 	k8sClient *k8s.Client,
 	authorizer *authz.Authorizer,
 	nsManager *authz.NamespaceManager,
@@ -89,7 +89,7 @@ func New(
 
 	// Create API key handler with updater function
 	// API keys are stored in the same namespace where API is running
-	apiKeyUpdater := func(keys []apiconfig.APIKey) error {
+	apiKeyUpdater := func(keys []config.APIKey) error {
 		return srv.UpdateAPIKeys(keys)
 	}
 	apiKeyHandler := apikey.NewHandler(k8sClient, cfg, apiKeyUpdater, apiNamespace)
