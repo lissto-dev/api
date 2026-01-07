@@ -148,7 +148,17 @@ func main() {
 	e.Validator = &CustomValidator{validator: validator.New()}
 
 	// Add global middleware (including API ID header)
-	e.Use(middleware.Logger())
+	// Configure logger to skip health checks at INFO level (only log at DEBUG)
+	logLevel := os.Getenv("LOG_LEVEL")
+	if logLevel == "" {
+		logLevel = cfg.Logging.Level
+	}
+	e.Use(middleware.LoggerWithConfig(middleware.LoggerConfig{
+		Skipper: func(c echo.Context) bool {
+			// Skip logging /health endpoint unless log level is debug
+			return c.Path() == "/health" && logLevel != "debug"
+		},
+	}))
 	e.Use(middleware.Recover())
 	e.Use(middleware.CORS())
 	e.Use(internalMiddleware.APIIDMiddleware(instanceID))
