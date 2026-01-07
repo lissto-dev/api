@@ -8,7 +8,7 @@ import (
 // Re-export namespace functions for backward compatibility.
 // These delegate to the controller's namespace package.
 var (
-	IsNamespaceAllowed       = namespace.IsNamespaceAllowed
+	IsNamespaceAllowed        = namespace.IsNamespaceAllowed
 	ResolveNamespacesToSearch = namespace.ResolveNamespacesToSearch
 )
 
