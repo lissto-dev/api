@@ -22,7 +22,6 @@ type BlueprintMetadata struct {
 	Title    string          `json:"title,omitempty"`
 	Services ServiceMetadata `json:"services"`
 	Volumes  []string        `json:"volumes,omitempty"`
-	Networks []string        `json:"networks,omitempty"`
 }
 
 // LisstoConfig contains x-lissto extension configuration
@@ -63,17 +62,13 @@ func ParseBlueprintMetadata(composeContent string, repoConfig controllerconfig.R
 	// Extract volumes
 	volumes := extractVolumeNames(project.Volumes)
 
-	// Extract networks
-	networks := extractNetworkNames(project.Networks)
-
 	return &BlueprintMetadata{
 		Title: title,
 		Services: ServiceMetadata{
 			Services: services,
 			Infra:    infra,
 		},
-		Volumes:  volumes,
-		Networks: networks,
+		Volumes: volumes,
 	}, nil
 }
 
@@ -196,15 +191,6 @@ func extractVolumeNames(volumes types.Volumes) []string {
 		volumeNames = append(volumeNames, name)
 	}
 	return volumeNames
-}
-
-// extractNetworkNames extracts network names from the project
-func extractNetworkNames(networks types.Networks) []string {
-	var networkNames []string
-	for name := range networks {
-		networkNames = append(networkNames, name)
-	}
-	return networkNames
 }
 
 // ServiceMetadataToJSON converts ServiceMetadata to JSON string
