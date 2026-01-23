@@ -71,42 +71,9 @@ func (h *Handler) CreateLifecycle(c echo.Context) error {
 	}
 
 	// Convert tasks from request to CRD format
-	tasks := make([]envv1alpha1.LifecycleTask, 0, len(req.Tasks))
-	for _, taskReq := range req.Tasks {
-		task := envv1alpha1.LifecycleTask{
-			Name: taskReq.Name,
-		}
-
-		if taskReq.Delete != nil {
-			olderThan, err := time.ParseDuration(taskReq.Delete.OlderThan)
-			if err != nil {
-				return c.String(400, fmt.Sprintf("Invalid olderThan duration: %v", err))
-			}
-			task.Delete = &envv1alpha1.DeleteTask{
-				OlderThan: metav1.Duration{Duration: olderThan},
-			}
-		}
-
-		if taskReq.ScaleDown != nil {
-			task.ScaleDown = &envv1alpha1.ScaleDownTask{}
-			if taskReq.ScaleDown.Timeout != "" {
-				timeout, err := time.ParseDuration(taskReq.ScaleDown.Timeout)
-				if err != nil {
-					return c.String(400, fmt.Sprintf("Invalid timeout duration: %v", err))
-				}
-				task.ScaleDown.Timeout = metav1.Duration{Duration: timeout}
-			}
-		}
-
-		if taskReq.ScaleUp != nil {
-			task.ScaleUp = &envv1alpha1.ScaleUpTask{}
-		}
-
-		if taskReq.Snapshot != nil {
-			task.Snapshot = &envv1alpha1.SnapshotTask{}
-		}
-
-		tasks = append(tasks, task)
+	tasks, err := h.convertTasksFromRequest(req.Tasks)
+	if err != nil {
+		return c.String(400, err.Error())
 	}
 
 	// Create Lifecycle CRD
@@ -225,43 +192,10 @@ func (h *Handler) UpdateLifecycle(c echo.Context) error {
 		lifecycle.Spec.Interval = metav1.Duration{Duration: interval}
 	}
 	if len(req.Tasks) > 0 {
-		// Convert tasks from request to CRD format (same logic as create)
-		tasks := make([]envv1alpha1.LifecycleTask, 0, len(req.Tasks))
-		for _, taskReq := range req.Tasks {
-			task := envv1alpha1.LifecycleTask{
-				Name: taskReq.Name,
-			}
-
-			if taskReq.Delete != nil {
-				olderThan, err := time.ParseDuration(taskReq.Delete.OlderThan)
-				if err != nil {
-					return c.String(400, fmt.Sprintf("Invalid olderThan duration: %v", err))
-				}
-				task.Delete = &envv1alpha1.DeleteTask{
-					OlderThan: metav1.Duration{Duration: olderThan},
-				}
-			}
-
-			if taskReq.ScaleDown != nil {
-				task.ScaleDown = &envv1alpha1.ScaleDownTask{}
-				if taskReq.ScaleDown.Timeout != "" {
-					timeout, err := time.ParseDuration(taskReq.ScaleDown.Timeout)
-					if err != nil {
-						return c.String(400, fmt.Sprintf("Invalid timeout duration: %v", err))
-					}
-					task.ScaleDown.Timeout = metav1.Duration{Duration: timeout}
-				}
-			}
-
-			if taskReq.ScaleUp != nil {
-				task.ScaleUp = &envv1alpha1.ScaleUpTask{}
-			}
-
-			if taskReq.Snapshot != nil {
-				task.Snapshot = &envv1alpha1.SnapshotTask{}
-			}
-
-			tasks = append(tasks, task)
+		// Convert tasks from request to CRD format
+		tasks, err := h.convertTasksFromRequest(req.Tasks)
+		if err != nil {
+			return c.String(400, err.Error())
 		}
 		lifecycle.Spec.Tasks = tasks
 	}
@@ -283,6 +217,48 @@ func (h *Handler) UpdateLifecycle(c echo.Context) error {
 			"id": name,
 		},
 	})
+}
+
+// convertTasksFromRequest converts request tasks to CRD task format
+func (h *Handler) convertTasksFromRequest(taskReqs []common.LifecycleTaskRequest) ([]envv1alpha1.LifecycleTask, error) {
+	tasks := make([]envv1alpha1.LifecycleTask, 0, len(taskReqs))
+	for _, taskReq := range taskReqs {
+		task := envv1alpha1.LifecycleTask{
+			Name: taskReq.Name,
+		}
+
+		if taskReq.Delete != nil {
+			olderThan, err := time.ParseDuration(taskReq.Delete.OlderThan)
+			if err != nil {
+				return nil, fmt.Errorf("invalid olderThan duration: %w", err)
+			}
+			task.Delete = &envv1alpha1.DeleteTask{
+				OlderThan: metav1.Duration{Duration: olderThan},
+			}
+		}
+
+		if taskReq.ScaleDown != nil {
+			task.ScaleDown = &envv1alpha1.ScaleDownTask{}
+			if taskReq.ScaleDown.Timeout != "" {
+				timeout, err := time.ParseDuration(taskReq.ScaleDown.Timeout)
+				if err != nil {
+					return nil, fmt.Errorf("invalid timeout duration: %w", err)
+				}
+				task.ScaleDown.Timeout = metav1.Duration{Duration: timeout}
+			}
+		}
+
+		if taskReq.ScaleUp != nil {
+			task.ScaleUp = &envv1alpha1.ScaleUpTask{}
+		}
+
+		if taskReq.Snapshot != nil {
+			task.Snapshot = &envv1alpha1.SnapshotTask{}
+		}
+
+		tasks = append(tasks, task)
+	}
+	return tasks, nil
 }
 
 // DeleteLifecycle handles DELETE /lifecycles/:id

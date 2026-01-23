@@ -34,114 +34,35 @@ func NewResourceClassifier() *ResourceClassifier {
 //   - workload: Everything else (deleted during suspension)
 func (r *ResourceClassifier) InjectClassAnnotations(objects []runtime.Object) []runtime.Object {
 	for i, obj := range objects {
-		var annotations map[string]string
-		var class string
-
-		switch resource := obj.(type) {
-		case *corev1.PersistentVolumeClaim:
-			class = ResourceClassState
-			if resource.Annotations == nil {
-				resource.Annotations = make(map[string]string)
-			}
-			resource.Annotations[ResourceClassAnnotation] = class
-			objects[i] = resource
-
-		case *networkingv1.Ingress:
-			class = ResourceClassState
-			if resource.Annotations == nil {
-				resource.Annotations = make(map[string]string)
-			}
-			resource.Annotations[ResourceClassAnnotation] = class
-			objects[i] = resource
-
-		case *appsv1.Deployment:
-			class = ResourceClassWorkload
-			if resource.Annotations == nil {
-				resource.Annotations = make(map[string]string)
-			}
-			resource.Annotations[ResourceClassAnnotation] = class
-			objects[i] = resource
-
-		case *appsv1.StatefulSet:
-			class = ResourceClassWorkload
-			if resource.Annotations == nil {
-				resource.Annotations = make(map[string]string)
-			}
-			resource.Annotations[ResourceClassAnnotation] = class
-			objects[i] = resource
-
-		case *appsv1.DaemonSet:
-			class = ResourceClassWorkload
-			if resource.Annotations == nil {
-				resource.Annotations = make(map[string]string)
-			}
-			resource.Annotations[ResourceClassAnnotation] = class
-			objects[i] = resource
-
-		case *batchv1.Job:
-			class = ResourceClassWorkload
-			if resource.Annotations == nil {
-				resource.Annotations = make(map[string]string)
-			}
-			resource.Annotations[ResourceClassAnnotation] = class
-			objects[i] = resource
-
-		case *batchv1.CronJob:
-			class = ResourceClassWorkload
-			if resource.Annotations == nil {
-				resource.Annotations = make(map[string]string)
-			}
-			resource.Annotations[ResourceClassAnnotation] = class
-			objects[i] = resource
-
-		case *corev1.Service:
-			class = ResourceClassWorkload
-			if resource.Annotations == nil {
-				resource.Annotations = make(map[string]string)
-			}
-			resource.Annotations[ResourceClassAnnotation] = class
-			objects[i] = resource
-
-		case *corev1.ConfigMap:
-			class = ResourceClassWorkload
-			if resource.Annotations == nil {
-				resource.Annotations = make(map[string]string)
-			}
-			resource.Annotations[ResourceClassAnnotation] = class
-			objects[i] = resource
-
-		case *corev1.Secret:
-			class = ResourceClassWorkload
-			if resource.Annotations == nil {
-				resource.Annotations = make(map[string]string)
-			}
-			resource.Annotations[ResourceClassAnnotation] = class
-			objects[i] = resource
-
-		case *corev1.Pod:
-			class = ResourceClassWorkload
-			if resource.Annotations == nil {
-				resource.Annotations = make(map[string]string)
-			}
-			resource.Annotations[ResourceClassAnnotation] = class
-			objects[i] = resource
-
-		default:
-			// For any unknown resource types, default to workload
-			// This ensures all resources have the annotation
-			if metaObj, ok := obj.(interface{ GetAnnotations() map[string]string }); ok {
-				annotations = metaObj.GetAnnotations()
-				if annotations == nil {
-					annotations = make(map[string]string)
-				}
-				annotations[ResourceClassAnnotation] = ResourceClassWorkload
-				if setter, ok := obj.(interface{ SetAnnotations(map[string]string) }); ok {
-					setter.SetAnnotations(annotations)
-					objects[i] = obj
-				}
-			}
-		}
+		class := r.getResourceClass(obj)
+		r.setClassAnnotation(obj, class)
+		objects[i] = obj
 	}
-
 	return objects
+}
+
+// getResourceClass determines the classification for a given resource type
+func (r *ResourceClassifier) getResourceClass(obj runtime.Object) string {
+	switch obj.(type) {
+	case *corev1.PersistentVolumeClaim, *networkingv1.Ingress:
+		return ResourceClassState
+	default:
+		return ResourceClassWorkload
+	}
+}
+
+// setClassAnnotation sets the lissto.dev/class annotation on a resource
+func (r *ResourceClassifier) setClassAnnotation(obj runtime.Object, class string) {
+	// Try to access annotations via metav1.Object interface
+	if metaObj, ok := obj.(interface {
+		GetAnnotations() map[string]string
+		SetAnnotations(map[string]string)
+	}); ok {
+		annotations := metaObj.GetAnnotations()
+		if annotations == nil {
+			annotations = make(map[string]string)
+		}
+		annotations[ResourceClassAnnotation] = class
+		metaObj.SetAnnotations(annotations)
+	}
 }

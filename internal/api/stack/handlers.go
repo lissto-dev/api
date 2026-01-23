@@ -64,29 +64,14 @@ func (f *FormattableStack) ToStandard() interface{} {
 
 // extractStackResponse extracts standard data from stack
 func extractStackResponse(stack *envv1alpha1.Stack) StackResponse {
-	resp := StackResponse{
+	return StackResponse{
 		Name:               stack.Name,
 		Namespace:          stack.Namespace,
 		BlueprintReference: stack.Spec.BlueprintReference,
 		EnvReference:       stack.Spec.Env,
 		Phase:              string(stack.Status.Phase),
+		Services:           convertAllServiceStatuses(stack.Status.Services),
 	}
-
-	// Convert service status if present
-	if len(stack.Status.Services) > 0 {
-		resp.Services = make(map[string]common.ServiceStatus)
-		for serviceName, serviceStatus := range stack.Status.Services {
-			ss := common.ServiceStatus{
-				Phase: string(serviceStatus.Phase),
-			}
-			if serviceStatus.SuspendedAt != nil {
-				ss.SuspendedAt = serviceStatus.SuspendedAt.Format("2006-01-02T15:04:05Z")
-			}
-			resp.Services[serviceName] = ss
-		}
-	}
-
-	return resp
 }
 
 // NewHandler creates a new stack handler
@@ -893,20 +878,32 @@ func (h *Handler) GetStackPhase(c echo.Context) error {
 	}
 
 	// Convert service status
-	if len(stack.Status.Services) > 0 {
-		resp.Services = make(map[string]common.ServiceStatus)
-		for serviceName, serviceStatus := range stack.Status.Services {
-			ss := common.ServiceStatus{
-				Phase: string(serviceStatus.Phase),
-			}
-			if serviceStatus.SuspendedAt != nil {
-				ss.SuspendedAt = serviceStatus.SuspendedAt.Format("2006-01-02T15:04:05Z")
-			}
-			resp.Services[serviceName] = ss
-		}
-	}
+	resp.Services = convertAllServiceStatuses(stack.Status.Services)
 
 	return c.JSON(200, resp)
+}
+
+// convertServiceStatus converts a single service status from controller format to API response format
+func convertServiceStatus(serviceStatus envv1alpha1.ServiceStatus) common.ServiceStatus {
+	ss := common.ServiceStatus{
+		Phase: string(serviceStatus.Phase),
+	}
+	if serviceStatus.SuspendedAt != nil {
+		ss.SuspendedAt = serviceStatus.SuspendedAt.Format("2006-01-02T15:04:05Z")
+	}
+	return ss
+}
+
+// convertAllServiceStatuses converts a map of service statuses from controller to API format
+func convertAllServiceStatuses(services map[string]envv1alpha1.ServiceStatus) map[string]common.ServiceStatus {
+	if len(services) == 0 {
+		return nil
+	}
+	result := make(map[string]common.ServiceStatus)
+	for name, status := range services {
+		result[name] = convertServiceStatus(status)
+	}
+	return result
 }
 
 // RestoreStack handles POST /stacks/:id/restore (stub for future implementation)
