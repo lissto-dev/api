@@ -118,15 +118,15 @@ type LifecycleResponse struct {
 
 // FormattableLifecycle wraps a Lifecycle to implement Formattable
 type FormattableLifecycle struct {
-	k8sObj *envv1alpha1.Lifecycle
+	K8sObj *envv1alpha1.Lifecycle
 }
 
 func (f *FormattableLifecycle) ToDetailed() (DetailedResponse, error) {
-	return NewDetailedResponse(f.k8sObj.ObjectMeta, f.k8sObj.Spec, nil)
+	return NewDetailedResponse(f.K8sObj.ObjectMeta, f.K8sObj.Spec, nil)
 }
 
 func (f *FormattableLifecycle) ToStandard() interface{} {
-	return extractLifecycleResponse(f.k8sObj)
+	return extractLifecycleResponse(f.K8sObj)
 }
 
 // extractLifecycleResponse extracts standard data from lifecycle

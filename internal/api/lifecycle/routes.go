@@ -5,10 +5,11 @@ import (
 )
 
 // RegisterRoutes registers lifecycle-related routes
-func RegisterRoutes(g *echo.Group, h *Handler, authMiddleware echo.MiddlewareFunc) {
-	g.GET("/lifecycles", h.GetLifecycles, authMiddleware)
-	g.GET("/lifecycles/:id", h.GetLifecycle, authMiddleware)
-	g.POST("/lifecycles", h.CreateLifecycle, authMiddleware)
-	g.PUT("/lifecycles/:id", h.UpdateLifecycle, authMiddleware)
-	g.DELETE("/lifecycles/:id", h.DeleteLifecycle, authMiddleware)
+func RegisterRoutes(g *echo.Group, h *Handler) {
+	// All authorization is handled in the handler methods
+	g.GET("/lifecycles", h.GetLifecycles)
+	g.GET("/lifecycles/:id", h.GetLifecycle)
+	g.POST("/lifecycles", h.CreateLifecycle)
+	g.PUT("/lifecycles/:id", h.UpdateLifecycle)
+	g.DELETE("/lifecycles/:id", h.DeleteLifecycle)
 }

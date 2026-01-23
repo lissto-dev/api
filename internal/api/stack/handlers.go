@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/compose-spec/compose-go/v2/loader"
 	"github.com/compose-spec/compose-go/v2/types"
@@ -763,10 +764,11 @@ func (h *Handler) SuspendStack(c echo.Context) error {
 
 	// Parse timeout if provided
 	if req.Timeout != "" {
-		timeout, err := metav1.ParseDuration(req.Timeout)
+		duration, err := time.ParseDuration(req.Timeout)
 		if err != nil {
 			return c.String(400, fmt.Sprintf("Invalid timeout format: %v", err))
 		}
+		timeout := metav1.Duration{Duration: duration}
 		suspension.Timeout = &timeout
 	}
 

@@ -146,7 +146,7 @@ func (h *Handler) GetLifecycle(c echo.Context) error {
 		return c.String(404, fmt.Sprintf("Lifecycle '%s' not found", name))
 	}
 
-	return common.HandleFormatResponse(c, &common.FormattableLifecycle{k8sObj: lifecycle})
+	return common.HandleFormatResponse(c, &common.FormattableLifecycle{K8sObj: lifecycle})
 }
 
 // UpdateLifecycle handles PUT /lifecycles/:id

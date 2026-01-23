@@ -116,15 +116,7 @@ func New(
 	prepare.RegisterRoutes(api.Group(""), prepareHandler)
 	variable.RegisterRoutes(api.Group("/variables"), variableHandler)
 	secret.RegisterRoutes(api.Group("/secrets"), secretHandler)
-
-	// Use function-based middleware for lifecycle routes (same auth logic)
-	lifecycleAuthMiddleware := func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
-			currentKeys := srv.GetAPIKeys()
-			return middleware.APIKeyMiddleware(currentKeys, authorizer)(next)(c)
-		}
-	}
-	lifecycle.RegisterRoutes(api.Group(""), lifecycleHandler, lifecycleAuthMiddleware)
+	lifecycle.RegisterRoutes(api.Group(""), lifecycleHandler)
 
 	// Register internal admin routes (apikey routes register themselves)
 	apikey.RegisterRoutes(api, apiKeyHandler)
