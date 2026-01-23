@@ -12,4 +12,10 @@ func RegisterRoutes(g *echo.Group, handler *Handler) {
 	g.POST("", handler.CreateStack)
 	g.PUT("/:id", handler.UpdateStack)
 	g.DELETE("/:id", handler.DeleteStack)
+
+	// Lifecycle operations
+	g.POST("/:id/suspend", handler.SuspendStack)
+	g.POST("/:id/resume", handler.ResumeStack)
+	g.GET("/:id/phase", handler.GetStackPhase)
+	g.POST("/:id/restore", handler.RestoreStack)
 }

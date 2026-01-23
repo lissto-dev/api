@@ -8,11 +8,13 @@ import (
 type Action string
 
 const (
-	ActionCreate Action = "create"
-	ActionRead   Action = "read"
-	ActionUpdate Action = "update"
-	ActionDelete Action = "delete"
-	ActionList   Action = "list"
+	ActionCreate  Action = "create"
+	ActionRead    Action = "read"
+	ActionUpdate  Action = "update"
+	ActionDelete  Action = "delete"
+	ActionList    Action = "list"
+	ActionSuspend Action = "suspend"
+	ActionResume  Action = "resume"
 )
 
 // ResourceType represents the type of resource
@@ -24,6 +26,7 @@ const (
 	ResourceEnv       ResourceType = "env"
 	ResourceVariable  ResourceType = "variable"
 	ResourceSecret    ResourceType = "secret"
+	ResourceLifecycle ResourceType = "lifecycle"
 )
 
 // Permission represents a permission check result
@@ -49,7 +52,24 @@ func (a *Authorizer) CanAccess(role Role, action Action, resourceType ResourceTy
 	// Admin can only list, read (get), and delete across any namespace
 	// Admin cannot create or update blueprints, stacks, or envs. it's a role for managing the platform, not for managing resources.
 	// Exception: Admin can create/update Variables and Secrets in global namespace (for global configs)
+	// Exception: Admin has full access to Lifecycle resources (cluster-scoped)
 	if role == Admin {
+		// Allow all operations on Lifecycle resources (cluster-scoped)
+		if resourceType == ResourceLifecycle {
+			return Permission{
+				Allowed: true,
+				Reason:  "admin has full access to lifecycle resources",
+			}
+		}
+
+		// Allow suspend/resume for stacks
+		if resourceType == ResourceStack && (action == ActionSuspend || action == ActionResume) {
+			return Permission{
+				Allowed: true,
+				Reason:  "admin can suspend/resume stacks",
+			}
+		}
+
 		// Allow create/update for Variables and Secrets in global namespace
 		if (resourceType == ResourceVariable || resourceType == ResourceSecret) &&
 			(action == ActionCreate || action == ActionUpdate) &&
@@ -104,6 +124,14 @@ func (a *Authorizer) CanAccess(role Role, action Action, resourceType ResourceTy
 
 	// User role
 	if role == User {
+		// Users cannot access Lifecycle resources (admin-only)
+		if resourceType == ResourceLifecycle {
+			return Permission{
+				Allowed: false,
+				Reason:  "lifecycle resources are admin-only",
+			}
+		}
+
 		// Users can CRUD their own namespaced resources
 		if a.isOwnNamespace(namespace, username) {
 			// For stack/env creation, ensure no global scoped resources
@@ -111,6 +139,13 @@ func (a *Authorizer) CanAccess(role Role, action Action, resourceType ResourceTy
 				return Permission{
 					Allowed: false,
 					Reason:  "no global scoped stacks/envs allowed",
+				}
+			}
+			// Allow suspend/resume for their own stacks
+			if resourceType == ResourceStack && (action == ActionSuspend || action == ActionResume) {
+				return Permission{
+					Allowed: true,
+					Reason:  "user can suspend/resume their own stacks",
 				}
 			}
 			return Permission{
@@ -153,9 +188,19 @@ func (a *Authorizer) GetAllowedNamespaces(role Role, action Action, resourceType
 
 	// Admin can only list, read, and delete across any namespace
 	if role == Admin {
-		// Block create and update actions
+		// Allow all operations on Lifecycle (cluster-scoped)
+		if resourceType == ResourceLifecycle {
+			return []string{"*"}
+		}
+
+		// Block create and update actions for namespaced resources
 		if action == ActionCreate || action == ActionUpdate {
 			return []string{} // No namespaces allowed
+		}
+
+		// Allow suspend/resume across all namespaces
+		if action == ActionSuspend || action == ActionResume {
+			return []string{"*"}
 		}
 
 		// Allow list, read, and delete across all namespaces

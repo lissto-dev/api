@@ -10,6 +10,7 @@ import (
 	"github.com/lissto-dev/api/internal/api/apikey"
 	"github.com/lissto-dev/api/internal/api/blueprint"
 	"github.com/lissto-dev/api/internal/api/env"
+	"github.com/lissto-dev/api/internal/api/lifecycle"
 	"github.com/lissto-dev/api/internal/api/prepare"
 	"github.com/lissto-dev/api/internal/api/secret"
 	"github.com/lissto-dev/api/internal/api/stack"
@@ -86,6 +87,7 @@ func New(
 	prepareHandler := prepare.NewHandler(k8sClient, authorizer, nsManager, cfg, imageCache)
 	variableHandler := variable.NewHandler(k8sClient, authorizer, nsManager, cfg)
 	secretHandler := secret.NewHandler(k8sClient, authorizer, nsManager, cfg)
+	lifecycleHandler := lifecycle.NewHandler(k8sClient, authorizer)
 
 	// Create API key handler with updater function
 	// API keys are stored in the same namespace where API is running
@@ -114,6 +116,15 @@ func New(
 	prepare.RegisterRoutes(api.Group(""), prepareHandler)
 	variable.RegisterRoutes(api.Group("/variables"), variableHandler)
 	secret.RegisterRoutes(api.Group("/secrets"), secretHandler)
+
+	// Use function-based middleware for lifecycle routes (same auth logic)
+	lifecycleAuthMiddleware := func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			currentKeys := srv.GetAPIKeys()
+			return middleware.APIKeyMiddleware(currentKeys, authorizer)(next)(c)
+		}
+	}
+	lifecycle.RegisterRoutes(api.Group(""), lifecycleHandler, lifecycleAuthMiddleware)
 
 	// Register internal admin routes (apikey routes register themselves)
 	apikey.RegisterRoutes(api, apiKeyHandler)
