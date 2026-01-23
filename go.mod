@@ -1,6 +1,6 @@
 module github.com/lissto-dev/api
 
-go 1.24.9
+go 1.25.6
 
 require (
 	github.com/compose-spec/compose-go/v2 v2.9.0
