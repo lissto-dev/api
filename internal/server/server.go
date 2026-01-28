@@ -24,15 +24,23 @@ import (
 	controllerconfig "github.com/lissto-dev/controller/pkg/config"
 )
 
+// VersionInfo contains build version information
+type VersionInfo struct {
+	Version   string `json:"version"`
+	BuildTime string `json:"buildTime"`
+	GoVersion string `json:"goVersion"`
+}
+
 // Server represents the API server
 type Server struct {
-	echo       *echo.Echo
-	apiKeys    []config.APIKey
-	apiKeysMu  sync.RWMutex
-	config     *controllerconfig.Config
-	k8sClient  *k8s.Client
-	instanceID string
-	publicURL  string
+	echo        *echo.Echo
+	apiKeys     []config.APIKey
+	apiKeysMu   sync.RWMutex
+	config      *controllerconfig.Config
+	k8sClient   *k8s.Client
+	instanceID  string
+	publicURL   string
+	versionInfo *VersionInfo
 }
 
 // GetAPIKeys returns a copy of the current API keys
@@ -64,15 +72,17 @@ func New(
 	apiNamespace string, // namespace where API is running (for API keys storage)
 	instanceID string, // API instance ID for verification
 	publicURL string, // Public URL if configured
+	versionInfo *VersionInfo, // Version information for /version endpoint
 ) *Server {
 	// Create server instance
 	srv := &Server{
-		echo:       e,
-		apiKeys:    apiKeys,
-		config:     cfg,
-		k8sClient:  k8sClient,
-		instanceID: instanceID,
-		publicURL:  publicURL,
+		echo:        e,
+		apiKeys:     apiKeys,
+		config:      cfg,
+		k8sClient:   k8sClient,
+		instanceID:  instanceID,
+		publicURL:   publicURL,
+		versionInfo: versionInfo,
 	}
 
 	// Create image cache (file-based in dev via IMAGE_CACHE_FILE_PATH, memory-based otherwise)
@@ -105,6 +115,8 @@ func New(
 			return middleware.APIKeyMiddleware(currentKeys, authorizer)(next)(c)
 		}
 	})
+	// Add version header only to authenticated requests (security: prevents version fingerprinting)
+	api.Use(middleware.VersionMiddleware(srv.versionInfo.Version))
 
 	// Register resource routes
 	stack.RegisterRoutes(api.Group("/stacks"), stackHandler)
@@ -118,8 +130,12 @@ func New(
 	// Register internal admin routes (apikey routes register themselves)
 	apikey.RegisterRoutes(api, apiKeyHandler)
 
-	// Health check (no auth required)
+	// Version endpoint (requires auth - security: prevents version fingerprinting by unauthenticated users)
+	api.GET("/version", srv.handleVersion)
+
+	// Health check (no auth required - for load balancers/probes)
 	// Supports ?info=true to return API information (public URL and API ID)
+	// Note: Does NOT expose version information
 	e.GET("/health", srv.handleHealth)
 
 	return srv
@@ -140,6 +156,12 @@ func (s *Server) handleHealth(c echo.Context) error {
 
 	// Normal health check - just return 200
 	return c.NoContent(200)
+}
+
+// handleVersion handles the version endpoint
+// Returns detailed version information for client compatibility checks
+func (s *Server) handleVersion(c echo.Context) error {
+	return c.JSON(200, s.versionInfo)
 }
 
 // Start starts the API server

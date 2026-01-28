@@ -5,6 +5,7 @@ import (
 	"flag"
 	"log"
 	"os"
+	"runtime"
 
 	"github.com/go-playground/validator/v10"
 	"github.com/labstack/echo/v4"
@@ -19,6 +20,12 @@ import (
 	"github.com/lissto-dev/api/pkg/logging"
 	pkgServer "github.com/lissto-dev/api/pkg/server"
 	controllerconfig "github.com/lissto-dev/controller/pkg/config"
+)
+
+// Version information - set via ldflags at build time
+var (
+	Version   = "dev"
+	BuildTime = "unknown"
 )
 
 // CustomValidator wraps the validator
@@ -147,15 +154,25 @@ func main() {
 	// Add validator
 	e.Validator = &CustomValidator{validator: validator.New()}
 
-	// Add global middleware (including API ID header)
+	// Create version info for middleware and endpoints
+	versionInfo := &server.VersionInfo{
+		Version:   Version,
+		BuildTime: BuildTime,
+		GoVersion: runtime.Version(),
+	}
+
+	// Add global middleware
+	// Note: Version header is only added to authenticated requests (see server.go)
 	e.Use(middleware.Logger())
 	e.Use(middleware.Recover())
 	e.Use(middleware.CORS())
 	e.Use(internalMiddleware.APIIDMiddleware(instanceID))
 
 	// Initialize and start server
-	srv := server.New(e, apiKeys, cfg, k8sClient, authorizer, nsManager, apiNamespace, instanceID, publicURL)
-	logging.Logger.Info("Server initialized")
+	srv := server.New(e, apiKeys, cfg, k8sClient, authorizer, nsManager, apiNamespace, instanceID, publicURL, versionInfo)
+	logging.Logger.Info("Server initialized",
+		zap.String("version", Version),
+		zap.String("buildTime", BuildTime))
 
 	if err := srv.Start(); err != nil {
 		logging.Logger.Fatal("Server error", zap.Error(err))
