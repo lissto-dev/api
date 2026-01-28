@@ -136,3 +136,68 @@ type CreateStackRequest struct {
 type UpdateStackRequest struct {
 	Blueprint string `json:"blueprint,omitempty"`
 }
+
+// SuspendStackRequest for suspending stack services
+type SuspendStackRequest struct {
+	Services []string `json:"services" validate:"required,min=1"` // Service names or ["*"] for all
+	Timeout  string   `json:"timeout,omitempty"`                  // e.g., "5m", "10m"
+}
+
+// RestoreStackRequest for restoring a stack from a snapshot (future feature)
+type RestoreStackRequest struct {
+	SnapshotRef string        `json:"snapshotRef" validate:"required"`
+	Exclude     []ResourceRef `json:"exclude,omitempty"`
+	Include     []ResourceRef `json:"include,omitempty"`
+}
+
+// ResourceRef identifies a specific Kubernetes resource
+type ResourceRef struct {
+	Kind string `json:"kind" validate:"required"`
+	Name string `json:"name" validate:"required"`
+}
+
+// CreateLifecycleRequest for creating a Lifecycle
+type CreateLifecycleRequest struct {
+	Name          string                 `json:"name" validate:"required"`
+	TargetKind    string                 `json:"targetKind" validate:"required,oneof=Stack Blueprint"`
+	LabelSelector map[string]string      `json:"labelSelector,omitempty"`
+	Interval      string                 `json:"interval" validate:"required"` // e.g., "1h", "24h"
+	Tasks         []LifecycleTaskRequest `json:"tasks" validate:"required,min=1"`
+}
+
+// LifecycleTaskRequest defines a lifecycle task
+type LifecycleTaskRequest struct {
+	Name      string                `json:"name,omitempty"`
+	Delete    *DeleteTaskRequest    `json:"delete,omitempty"`
+	ScaleDown *ScaleDownTaskRequest `json:"scaleDown,omitempty"`
+	ScaleUp   *ScaleUpTaskRequest   `json:"scaleUp,omitempty"`
+	Snapshot  *SnapshotTaskRequest  `json:"snapshot,omitempty"`
+}
+
+// DeleteTaskRequest configures object deletion based on age
+type DeleteTaskRequest struct {
+	OlderThan string `json:"olderThan" validate:"required"` // e.g., "24h", "7d"
+}
+
+// ScaleDownTaskRequest configures scaling down workloads
+type ScaleDownTaskRequest struct {
+	Timeout string `json:"timeout,omitempty"` // e.g., "5m"
+}
+
+// ScaleUpTaskRequest configures scaling up workloads
+type ScaleUpTaskRequest struct {
+	// Empty struct - restores original replica counts
+}
+
+// SnapshotTaskRequest configures volume snapshot creation
+type SnapshotTaskRequest struct {
+	// Empty struct - uses controller config
+}
+
+// UpdateLifecycleRequest for updating a Lifecycle
+type UpdateLifecycleRequest struct {
+	TargetKind    string                 `json:"targetKind,omitempty"`
+	LabelSelector map[string]string      `json:"labelSelector,omitempty"`
+	Interval      string                 `json:"interval,omitempty"`
+	Tasks         []LifecycleTaskRequest `json:"tasks,omitempty"`
+}

@@ -363,3 +363,38 @@ func (c *Client) DeleteLisstoSecret(ctx context.Context, namespace, name string)
 	secret.Name = name
 	return c.Delete(ctx, secret)
 }
+
+// CreateLifecycle creates a Lifecycle resource (cluster-scoped)
+func (c *Client) CreateLifecycle(ctx context.Context, lifecycle *envv1alpha1.Lifecycle) error {
+	return c.Create(ctx, lifecycle)
+}
+
+// GetLifecycle retrieves a Lifecycle resource (cluster-scoped)
+func (c *Client) GetLifecycle(ctx context.Context, name string) (*envv1alpha1.Lifecycle, error) {
+	lifecycle := &envv1alpha1.Lifecycle{}
+	if err := c.Get(ctx, client.ObjectKey{Name: name}, lifecycle); err != nil {
+		return nil, err
+	}
+	return lifecycle, nil
+}
+
+// ListLifecycles lists all Lifecycle resources (cluster-scoped)
+func (c *Client) ListLifecycles(ctx context.Context) (*envv1alpha1.LifecycleList, error) {
+	lifecycleList := &envv1alpha1.LifecycleList{}
+	if err := c.List(ctx, lifecycleList); err != nil {
+		return nil, err
+	}
+	return lifecycleList, nil
+}
+
+// UpdateLifecycle updates a Lifecycle resource (cluster-scoped)
+func (c *Client) UpdateLifecycle(ctx context.Context, lifecycle *envv1alpha1.Lifecycle) error {
+	return c.Update(ctx, lifecycle)
+}
+
+// DeleteLifecycle deletes a Lifecycle resource (cluster-scoped)
+func (c *Client) DeleteLifecycle(ctx context.Context, name string) error {
+	lifecycle := &envv1alpha1.Lifecycle{}
+	lifecycle.Name = name
+	return c.Delete(ctx, lifecycle)
+}

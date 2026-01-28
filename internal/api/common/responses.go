@@ -85,3 +85,64 @@ func ExtractBlueprintTitle(bp *envv1alpha1.Blueprint, fallback string) string {
 	}
 	return fallback
 }
+
+// StackPhaseResponse contains stack phase and lifecycle information
+type StackPhaseResponse struct {
+	Phase        string                   `json:"phase"`
+	PhaseHistory []PhaseTransition        `json:"phaseHistory,omitempty"`
+	Services     map[string]ServiceStatus `json:"services,omitempty"`
+}
+
+// PhaseTransition records a phase change
+type PhaseTransition struct {
+	Phase          string `json:"phase"`
+	TransitionTime string `json:"transitionTime"`
+	Reason         string `json:"reason,omitempty"`
+	Message        string `json:"message,omitempty"`
+}
+
+// ServiceStatus tracks the status of a single service
+type ServiceStatus struct {
+	Phase       string `json:"phase"`
+	SuspendedAt string `json:"suspendedAt,omitempty"`
+}
+
+// LifecycleResponse represents a Lifecycle resource
+type LifecycleResponse struct {
+	Name       string `json:"name"`
+	TargetKind string `json:"targetKind"`
+	Interval   string `json:"interval"`
+	LastRun    string `json:"lastRun,omitempty"`
+	NextRun    string `json:"nextRun,omitempty"`
+}
+
+// FormattableLifecycle wraps a Lifecycle to implement Formattable
+type FormattableLifecycle struct {
+	K8sObj *envv1alpha1.Lifecycle
+}
+
+func (f *FormattableLifecycle) ToDetailed() (DetailedResponse, error) {
+	return NewDetailedResponse(f.K8sObj.ObjectMeta, f.K8sObj.Spec, nil)
+}
+
+func (f *FormattableLifecycle) ToStandard() interface{} {
+	return extractLifecycleResponse(f.K8sObj)
+}
+
+// extractLifecycleResponse extracts standard data from lifecycle
+func extractLifecycleResponse(lifecycle *envv1alpha1.Lifecycle) LifecycleResponse {
+	resp := LifecycleResponse{
+		Name:       lifecycle.Name,
+		TargetKind: lifecycle.Spec.TargetKind,
+		Interval:   lifecycle.Spec.Interval.Duration.String(),
+	}
+
+	if lifecycle.Status.LastRunTime != nil {
+		resp.LastRun = lifecycle.Status.LastRunTime.Format("2006-01-02T15:04:05Z")
+	}
+	if lifecycle.Status.NextRunTime != nil {
+		resp.NextRun = lifecycle.Status.NextRunTime.Format("2006-01-02T15:04:05Z")
+	}
+
+	return resp
+}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/compose-spec/compose-go/v2/loader"
 	"github.com/compose-spec/compose-go/v2/types"
@@ -40,10 +41,12 @@ type Handler struct {
 
 // StackResponse represents standard stack data
 type StackResponse struct {
-	Name               string `json:"name"`
-	Namespace          string `json:"namespace"`
-	BlueprintReference string `json:"blueprintReference"`
-	EnvReference       string `json:"envReference"`
+	Name               string                          `json:"name"`
+	Namespace          string                          `json:"namespace"`
+	BlueprintReference string                          `json:"blueprintReference"`
+	EnvReference       string                          `json:"envReference"`
+	Phase              string                          `json:"phase,omitempty"`
+	Services           map[string]common.ServiceStatus `json:"services,omitempty"`
 }
 
 // FormattableStack wraps a k8s Stack to implement common.Formattable
@@ -67,6 +70,8 @@ func extractStackResponse(stack *envv1alpha1.Stack) StackResponse {
 		Namespace:          stack.Namespace,
 		BlueprintReference: stack.Spec.BlueprintReference,
 		EnvReference:       stack.Spec.Env,
+		Phase:              string(stack.Status.Phase),
+		Services:           convertAllServiceStatuses(stack.Status.Services),
 	}
 }
 
@@ -697,7 +702,11 @@ func (h *Handler) generateKubernetesManifests(project *types.Project, namespace,
 	commandOverrider := postprocessor.NewCommandOverrider()
 	objects = commandOverrider.OverrideCommands(objects, serviceLabelMap)
 
-	// 7. Serialize to YAML
+	// 7. Post-process: inject resource class annotations (required by controller)
+	classifier := postprocessor.NewResourceClassifier()
+	objects = classifier.InjectClassAnnotations(objects)
+
+	// 8. Serialize to YAML
 	yamlManifests, err := converter.SerializeToYAML(objects)
 	if err != nil {
 		return "", fmt.Errorf("YAML serialization failed: %w", err)
@@ -716,4 +725,190 @@ func (h *Handler) extractServiceLabels(project *types.Project) map[string]map[st
 		}
 	}
 	return labelMap
+}
+
+// SuspendStack handles POST /stacks/:id/suspend
+func (h *Handler) SuspendStack(c echo.Context) error {
+	idParam := c.Param("id")
+	user, _ := middleware.GetUserFromContext(c)
+
+	var req common.SuspendStackRequest
+	if err := c.Bind(&req); err != nil {
+		return c.String(400, "Invalid request")
+	}
+	if err := c.Validate(&req); err != nil {
+		return c.String(400, err.Error())
+	}
+
+	// Get allowed namespaces for suspend
+	allowedNS := h.authorizer.GetAllowedNamespaces(user.Role, authz.ActionSuspend, authz.ResourceStack, user.Name)
+	if len(allowedNS) == 0 {
+		return c.String(403, "Permission denied: no accessible namespaces")
+	}
+
+	// Resolve namespace from ID
+	targetNamespace, name, searchAll := h.nsManager.ResolveNamespaceFromID(idParam, allowedNS)
+
+	// Try to find the stack
+	userNS := h.nsManager.GetDeveloperNamespace(user.Name)
+	globalNS := h.nsManager.GetGlobalNamespace()
+	stack, found := h.findStack(c, targetNamespace, name, searchAll, userNS, globalNS, allowedNS)
+	if !found {
+		return c.String(404, fmt.Sprintf("Stack '%s' not found", idParam))
+	}
+
+	// Create suspension spec
+	suspension := &envv1alpha1.SuspensionSpec{
+		Services: req.Services,
+	}
+
+	// Parse timeout if provided
+	if req.Timeout != "" {
+		duration, err := time.ParseDuration(req.Timeout)
+		if err != nil {
+			return c.String(400, fmt.Sprintf("Invalid timeout format: %v", err))
+		}
+		timeout := metav1.Duration{Duration: duration}
+		suspension.Timeout = &timeout
+	}
+
+	// Update stack with suspension
+	stack.Spec.Suspension = suspension
+
+	if err := h.k8sClient.UpdateStack(c.Request().Context(), stack); err != nil {
+		logging.Logger.Error("Failed to suspend stack",
+			zap.String("namespace", stack.Namespace),
+			zap.String("name", stack.Name),
+			zap.Error(err))
+		return c.String(500, "Failed to suspend stack")
+	}
+
+	logging.Logger.Info("Stack suspended successfully",
+		zap.String("stack_name", stack.Name),
+		zap.String("namespace", stack.Namespace),
+		zap.String("user", user.Name),
+		zap.Strings("services", req.Services))
+
+	return c.JSON(200, map[string]interface{}{
+		"message": "Stack suspension initiated",
+		"phase":   string(stack.Status.Phase),
+	})
+}
+
+// ResumeStack handles POST /stacks/:id/resume
+func (h *Handler) ResumeStack(c echo.Context) error {
+	idParam := c.Param("id")
+	user, _ := middleware.GetUserFromContext(c)
+
+	// Get allowed namespaces for resume
+	allowedNS := h.authorizer.GetAllowedNamespaces(user.Role, authz.ActionResume, authz.ResourceStack, user.Name)
+	if len(allowedNS) == 0 {
+		return c.String(403, "Permission denied: no accessible namespaces")
+	}
+
+	// Resolve namespace from ID
+	targetNamespace, name, searchAll := h.nsManager.ResolveNamespaceFromID(idParam, allowedNS)
+
+	// Try to find the stack
+	userNS := h.nsManager.GetDeveloperNamespace(user.Name)
+	globalNS := h.nsManager.GetGlobalNamespace()
+	stack, found := h.findStack(c, targetNamespace, name, searchAll, userNS, globalNS, allowedNS)
+	if !found {
+		return c.String(404, fmt.Sprintf("Stack '%s' not found", idParam))
+	}
+
+	// Clear suspension
+	stack.Spec.Suspension = nil
+
+	if err := h.k8sClient.UpdateStack(c.Request().Context(), stack); err != nil {
+		logging.Logger.Error("Failed to resume stack",
+			zap.String("namespace", stack.Namespace),
+			zap.String("name", stack.Name),
+			zap.Error(err))
+		return c.String(500, "Failed to resume stack")
+	}
+
+	logging.Logger.Info("Stack resumed successfully",
+		zap.String("stack_name", stack.Name),
+		zap.String("namespace", stack.Namespace),
+		zap.String("user", user.Name))
+
+	return c.JSON(200, map[string]interface{}{
+		"message": "Stack resume initiated",
+		"phase":   string(stack.Status.Phase),
+	})
+}
+
+// GetStackPhase handles GET /stacks/:id/phase
+func (h *Handler) GetStackPhase(c echo.Context) error {
+	idParam := c.Param("id")
+	user, _ := middleware.GetUserFromContext(c)
+
+	// Get allowed namespaces
+	allowedNS := h.authorizer.GetAllowedNamespaces(user.Role, authz.ActionRead, authz.ResourceStack, user.Name)
+	if len(allowedNS) == 0 {
+		return c.String(403, "Permission denied: no accessible namespaces")
+	}
+
+	// Resolve namespace from ID
+	targetNamespace, name, searchAll := h.nsManager.ResolveNamespaceFromID(idParam, allowedNS)
+
+	// Try to find the stack
+	userNS := h.nsManager.GetDeveloperNamespace(user.Name)
+	globalNS := h.nsManager.GetGlobalNamespace()
+	stack, found := h.findStack(c, targetNamespace, name, searchAll, userNS, globalNS, allowedNS)
+	if !found {
+		return c.String(404, fmt.Sprintf("Stack '%s' not found", idParam))
+	}
+
+	// Build phase response
+	resp := common.StackPhaseResponse{
+		Phase: string(stack.Status.Phase),
+	}
+
+	// Convert phase history
+	if len(stack.Status.PhaseHistory) > 0 {
+		resp.PhaseHistory = make([]common.PhaseTransition, 0, len(stack.Status.PhaseHistory))
+		for _, pt := range stack.Status.PhaseHistory {
+			resp.PhaseHistory = append(resp.PhaseHistory, common.PhaseTransition{
+				Phase:          string(pt.Phase),
+				TransitionTime: pt.TransitionTime.Format("2006-01-02T15:04:05Z"),
+				Reason:         pt.Reason,
+				Message:        pt.Message,
+			})
+		}
+	}
+
+	// Convert service status
+	resp.Services = convertAllServiceStatuses(stack.Status.Services)
+
+	return c.JSON(200, resp)
+}
+
+// convertServiceStatus converts a single service status from controller format to API response format
+func convertServiceStatus(serviceStatus envv1alpha1.ServiceStatus) common.ServiceStatus {
+	ss := common.ServiceStatus{
+		Phase: string(serviceStatus.Phase),
+	}
+	if serviceStatus.SuspendedAt != nil {
+		ss.SuspendedAt = serviceStatus.SuspendedAt.Format("2006-01-02T15:04:05Z")
+	}
+	return ss
+}
+
+// convertAllServiceStatuses converts a map of service statuses from controller to API format
+func convertAllServiceStatuses(services map[string]envv1alpha1.ServiceStatus) map[string]common.ServiceStatus {
+	if len(services) == 0 {
+		return nil
+	}
+	result := make(map[string]common.ServiceStatus)
+	for name, status := range services {
+		result[name] = convertServiceStatus(status)
+	}
+	return result
+}
+
+// RestoreStack handles POST /stacks/:id/restore (stub for future implementation)
+func (h *Handler) RestoreStack(c echo.Context) error {
+	return c.String(501, "Stack restoration from snapshots is not yet implemented")
 }
