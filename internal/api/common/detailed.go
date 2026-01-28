@@ -45,6 +45,13 @@ type DetailedResponse struct {
 	Spec     interface{}      `json:"spec"`
 }
 
+// MetadataOnlyResponse represents just the metadata portion (no spec)
+// Inspired by K8s PartialObjectMetadata - useful for lightweight list operations
+// where only metadata (labels, annotations, timestamps) is needed
+type MetadataOnlyResponse struct {
+	Metadata DetailedMetadata `json:"metadata"`
+}
+
 // NewDetailedResponse creates a detailed response from a k8s object
 // The spec parameter should be the resource's Spec field (e.g., blueprint.Spec, stack.Spec)
 func NewDetailedResponse(obj metav1.ObjectMeta, spec interface{}, nsManager *authz.NamespaceManager) (DetailedResponse, error) {

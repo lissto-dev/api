@@ -315,6 +315,7 @@ func extractBlueprintResponse(bp *envv1alpha1.Blueprint, nsManager *authz.Namesp
 }
 
 // GetBlueprints handles GET /blueprints
+// Supports ?format=metadata for lightweight responses (metadata only, no spec)
 func (h *Handler) GetBlueprints(c echo.Context) error {
 	user, _ := middleware.GetUserFromContext(c)
 
@@ -330,18 +331,16 @@ func (h *Handler) GetBlueprints(c echo.Context) error {
 		return c.String(403, "Permission denied: no accessible namespaces")
 	}
 
-	var allBlueprints []BlueprintResponse
+	// Collect all blueprint items first
+	var allItems []envv1alpha1.Blueprint
 
-	// List from allowed namespaces
 	if allowedNS[0] == "*" {
 		// Admin: list from all namespaces
 		bpList, err := h.k8sClient.ListBlueprints(c.Request().Context(), "")
 		if err != nil {
 			return c.String(500, "Failed to list blueprints")
 		}
-		for i := range bpList.Items {
-			allBlueprints = append(allBlueprints, extractBlueprintResponse(&bpList.Items[i], h.nsManager))
-		}
+		allItems = append(allItems, bpList.Items...)
 	} else {
 		// List from each allowed namespace
 		for _, ns := range allowedNS {
@@ -349,13 +348,34 @@ func (h *Handler) GetBlueprints(c echo.Context) error {
 			if err != nil {
 				continue
 			}
-			for i := range bpList.Items {
-				allBlueprints = append(allBlueprints, extractBlueprintResponse(&bpList.Items[i], h.nsManager))
-			}
+			allItems = append(allItems, bpList.Items...)
 		}
 	}
 
-	// Return array of enriched blueprint objects
+	// Check format parameter
+	format := c.QueryParam("format")
+
+	if format == "metadata" {
+		// Return []MetadataOnlyResponse - lightweight, no spec
+		// Inspired by K8s PartialObjectMetadata pattern
+		var metadataList []common.MetadataOnlyResponse
+		for i := range allItems {
+			metadata, err := common.ExtractDetailedMetadata(allItems[i].ObjectMeta, h.nsManager)
+			if err != nil {
+				// Skip items with metadata extraction errors
+				continue
+			}
+			metadataList = append(metadataList, common.MetadataOnlyResponse{Metadata: metadata})
+		}
+		return c.JSON(200, metadataList)
+	}
+
+	// Default: return standard BlueprintResponse array
+	var allBlueprints []BlueprintResponse
+	for i := range allItems {
+		allBlueprints = append(allBlueprints, extractBlueprintResponse(&allItems[i], h.nsManager))
+	}
+
 	return c.JSON(200, allBlueprints)
 }
 
